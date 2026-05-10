@@ -88,6 +88,13 @@ impl VcpuFd {
         )?;
         Ok(decode_exit(unsafe { &*self.run_ptr }, self.run_ptr))
     }
+
+    pub fn set_mmio_read_data(&mut self, data: &[u8]) {
+        let run = unsafe { &mut *self.run_ptr };
+        let mmio = unsafe { &mut run.__bindgen_anon_1.mmio };
+        let n = data.len().min(8);
+        mmio.data[..n].copy_from_slice(&data[..n]);
+    }
 }
 
 impl Drop for VcpuFd {

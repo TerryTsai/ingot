@@ -1,34 +1,21 @@
-//! VM lifecycle state machine and run-to-completion loop.
-//!
-//! Phase 6 deliverable. Currently a sketch.
+//! VM lifecycle: validate config, instantiate subsystems, drive the
+//! run-to-completion loop, capture telemetry. The only subsystem that
+//! knows about all the others.
 
+mod run;
+mod runtime;
 mod state;
+mod validate;
+
+#[cfg(test)]
+mod tests;
 
 pub use state::State;
+pub(crate) use runtime::Runtime;
 
-use crate::config::Config;
-use crate::devices::MmioBus;
 use crate::error::IngotError;
-use crate::guest_mem::GuestMem;
-use crate::kvm::{VcpuFd, VmFd};
-use crate::outcome::{Outcome, Telemetry};
-
-pub(crate) struct Runtime {
-    state: State,
-    config: Config,
-    mem: GuestMem,
-    vm_fd: VmFd,
-    vcpus: Vec<VcpuFd>,
-    bus: MmioBus,
-    telemetry: Telemetry,
-}
-
-impl Runtime {
-    pub fn new(config: Config) -> Result<Self, IngotError> {
-        unimplemented!()
-    }
-}
+use crate::outcome::Outcome;
 
 pub(crate) fn run(runtime: Runtime) -> Result<Outcome, IngotError> {
-    unimplemented!()
+    run::run(runtime)
 }
