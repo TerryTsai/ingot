@@ -101,7 +101,7 @@ Owns the run loop: drives vCPUs, dispatches MMIO exits to the bus, handles state
 
 ### 2.5 `jailer`
 
-Owns: `src/bin/ingot-jailer.rs` (separate binary, separate `Cargo.toml` workspace member).
+Owns: `ingot-jailer/` (separate crate; added as a workspace member in Phase 7).
 
 Does not link `ingot` as a library. The jailer is an opaque-binary launcher: it sets up cgroups v2, creates namespaces (user, mount, PID, net), installs the seccomp filter, drops privileges, then `execve`s the VMM binary. The seccomp filter is built from a static allowlist with the dangerous-syscall denylist as a defense-in-depth backstop.
 
@@ -358,32 +358,38 @@ Consequence: `ingot` cannot be MITM'd between caller and guest at the applicatio
 
 ## 11. File and module layout
 
+Phase 0 sketches the structure below. Files marked _later_ are placeholders; they are added in their phase. Telemetry types live alongside `Outcome` (top-level) because they are a public-API concern, not a lifecycle internal — `lifecycle` writes them; callers read them.
+
 ```
 src/
-  lib.rs                  — public API: Vm, Config, Outcome, IngotError
+  lib.rs                — public surface: Vm, module declarations, re-exports
+  config.rs             — Config, BlockSpec, NetSpec, VsockSpec, StdoutSink
+  error.rs              — IngotError, HostError, From impls
+  outcome.rs            — Outcome, ExitStatus, GuestFaultReason, Telemetry, TransitionEvent
+  guest_mem.rs          — GuestMem
   kvm/
-    mod.rs                — Kvm, VmFd, VcpuFd, VcpuExit
-    bindings.rs           — minimal raw ioctl wrappers
+    mod.rs              — Kvm, VmFd, VcpuFd, VcpuExit, RegState, KvmError
+    bindings.rs         — minimal raw ioctl wrappers (later)
   boot/
-    mod.rs                — load_kernel, load_initramfs, build_boot_params, prime_vcpu
-    elf.rs                — ELF parsing
-    pagetables.rs         — identity-map page table construction
-    boot_params.rs        — Linux x86_64 boot protocol struct
+    mod.rs              — KernelImage, InitramfsImage, BootParams, load/build/prime
+    elf.rs              — ELF parsing (later)
+    pagetables.rs       — identity-map page table construction (later)
+    boot_params.rs      — Linux x86_64 boot_params struct (later)
   devices/
-    mod.rs                — MmioDevice trait, MmioBus
-    uart.rs               — 8250 UART
-    block.rs              — virtio-block
-    net.rs                — virtio-net
-    vsock.rs              — virtio-vsock
-    virtqueue.rs          — shared virtio queue parsing (validated)
+    mod.rs              — MmioDevice trait, MmioBus, GuestError, Interrupt
+    uart.rs             — 8250 UART
+    block.rs            — virtio-block
+    net.rs              — virtio-net
+    vsock.rs            — virtio-vsock
+    virtqueue.rs        — shared virtio queue parsing, validated (later)
   lifecycle/
-    mod.rs                — Vm::new, Vm::run, run loop
-    state.rs              — state enum + transition function
-    telemetry.rs          — Telemetry, TransitionEvent, ExitStatus
+    mod.rs              — Runtime, run loop entry point
+    state.rs            — State enum + transition function
   bin/
-    ingot.rs              — CLI: thin wrapper over public API
-    ingot-jailer.rs       — jailer binary; does not link ingot
+    ingot.rs            — CLI: thin wrapper over public API
 ```
+
+Phase 7 introduces `ingot-jailer` as a sibling crate. At that point the repository becomes a Cargo workspace with `ingot/` and `ingot-jailer/` as members. The jailer does not link `ingot`; it treats the VMM as an opaque binary it isolates and execs.
 
 Every file in this layout is subject to the 100-line limit (SPEC.md §5.1). Subsystem directories will grow more files; existing files do not grow past the limit.
 

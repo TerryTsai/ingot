@@ -1,0 +1,7 @@
+[package]
+name = "ingot"
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Minimal KVM-based VMM for ephemeral, hardware-isolated microVMs"
+publish = false
