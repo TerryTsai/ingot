@@ -1,9 +1,13 @@
 //! Linux x86_64 boot protocol.
 //!
-//! Phase 2 in progress. ELF loading is implemented; page tables,
-//! boot_params, initramfs placement, and register priming follow.
+//! Phase 2 in progress. ELF loading, identity-mapped page tables, the
+//! long-mode GDT, and register priming for direct kernel entry are in
+//! place. boot_params construction and initramfs placement follow.
 
 mod elf;
+mod gdt;
+mod pagetables;
+mod prime;
 
 #[cfg(test)]
 mod tests;
@@ -52,5 +56,5 @@ pub fn prime_vcpu(
     params_addr: u64,
     mem: &mut GuestMem,
 ) -> Result<RegState, HostError> {
-    unimplemented!()
+    prime::prime(kernel, params_addr, mem)
 }

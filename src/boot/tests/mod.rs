@@ -1,6 +1,9 @@
 //! Boot subsystem tests. Synthetic-ELF helpers + per-component test files.
 
 mod elf;
+mod gdt;
+mod pagetables;
+mod prime;
 
 pub(super) const ENTRY_POINT: u64 = 0x10_0000;
 pub(super) const SEGMENT_PADDR: u64 = 0x10_0000;
