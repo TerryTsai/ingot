@@ -1,3 +1,6 @@
+// Phase 4 placeholder. virtio-net: caller-provided TAP fd over MMIO virtqueues.
+#![allow(unused_variables)]
+
 use std::os::unix::io::RawFd;
 
 use super::{GuestError, Interrupt, MmioDevice};

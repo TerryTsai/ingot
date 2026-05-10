@@ -2,10 +2,7 @@ use super::open_or_skip;
 
 #[test]
 fn gets_and_sets_regs() {
-    let kvm = match open_or_skip("gets_and_sets_regs") {
-        Some(k) => k,
-        None => return,
-    };
+    let Some(kvm) = open_or_skip("gets_and_sets_regs") else { return; };
     let vm = kvm.create_vm().expect("create_vm");
     let vcpu = vm.create_vcpu(0).expect("create_vcpu");
     let mut regs = vcpu.get_regs().expect("get_regs");
@@ -18,10 +15,7 @@ fn gets_and_sets_regs() {
 
 #[test]
 fn gets_and_sets_sregs() {
-    let kvm = match open_or_skip("gets_and_sets_sregs") {
-        Some(k) => k,
-        None => return,
-    };
+    let Some(kvm) = open_or_skip("gets_and_sets_sregs") else { return; };
     let vm = kvm.create_vm().expect("create_vm");
     let vcpu = vm.create_vcpu(0).expect("create_vcpu");
     let mut sregs = vcpu.get_sregs().expect("get_sregs");

@@ -1,5 +1,4 @@
-use crate::lifecycle::State;
-use crate::lifecycle::state::transition;
+use crate::lifecycle::{state::transition, State};
 
 #[test]
 fn legal_path_through_states() {

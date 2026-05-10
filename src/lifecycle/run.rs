@@ -24,18 +24,13 @@ pub(super) fn run(mut rt: Runtime) -> Result<Outcome, IngotError> {
 }
 
 fn boot_kernel(rt: &mut Runtime) -> Result<(), IngotError> {
-    let kernel_bytes = read_file(&rt.config.kernel_path).map_err(|_| {
+    let kernel_bytes = std::fs::read(&rt.config.kernel_path).map_err(|_| {
         IngotError::Host(HostError::KernelImageNotReadable(rt.config.kernel_path.clone()))
     })?;
     let kernel = boot::load_kernel(&kernel_bytes, &mut rt.mem)?;
     let initramfs = load_optional_initramfs(rt, &kernel)?;
     write_cmdline(&mut rt.mem, &rt.config.cmdline)?;
-    let bp = boot::build_boot_params(
-        initramfs.as_ref(),
-        CMDLINE_ADDR,
-        CMDLINE_MAX,
-        rt.config.memory_bytes,
-    )?;
+    let bp = boot::build_boot_params(initramfs.as_ref(), CMDLINE_ADDR, CMDLINE_MAX, rt.config.memory_bytes)?;
     bp.write_to(BOOT_PARAMS_ADDR, &mut rt.mem)?;
     let state = boot::prime_vcpu(&kernel, BOOT_PARAMS_ADDR, &mut rt.mem)?;
     rt.vcpus[0].set_sregs(&state.sregs)?;
@@ -48,7 +43,7 @@ fn load_optional_initramfs(
     kernel: &boot::KernelImage,
 ) -> Result<Option<boot::InitramfsImage>, IngotError> {
     let Some(p) = rt.config.initramfs_path.clone() else { return Ok(None); };
-    let bytes = read_file(&p).map_err(|_| IngotError::Host(HostError::InitramfsNotReadable(p)))?;
+    let bytes = std::fs::read(&p).map_err(|_| IngotError::Host(HostError::InitramfsNotReadable(p)))?;
     Ok(Some(boot::load_initramfs(&bytes, &mut rt.mem, kernel)?))
 }
 
@@ -56,10 +51,6 @@ fn write_cmdline(mem: &mut GuestMem, cmdline: &str) -> Result<(), IngotError> {
     mem.write(CMDLINE_ADDR, cmdline.as_bytes())?;
     mem.write(CMDLINE_ADDR + cmdline.len() as u64, &[0])?;
     Ok(())
-}
-
-fn read_file(p: &std::path::Path) -> std::io::Result<Vec<u8>> {
-    std::fs::read(p)
 }
 
 fn run_loop(rt: &mut Runtime) -> Result<ExitStatus, IngotError> {

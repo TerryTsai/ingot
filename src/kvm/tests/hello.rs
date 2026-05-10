@@ -12,10 +12,7 @@ const CODE_GUEST_PHYS: u64 = 0x1000;
 
 #[test]
 fn real_mode_hlt() {
-    let kvm = match open_or_skip("real_mode_hlt") {
-        Some(k) => k,
-        None => return,
-    };
+    let Some(kvm) = open_or_skip("real_mode_hlt") else { return; };
     let vm = kvm.create_vm().expect("create_vm");
 
     let page = unsafe {
@@ -29,9 +26,7 @@ fn real_mode_hlt() {
         )
     };
     assert_ne!(page, libc::MAP_FAILED, "mmap host page");
-    unsafe {
-        *(page as *mut u8) = 0xf4;
-    }
+    unsafe { *(page as *mut u8) = 0xf4; }
 
     vm.set_user_memory_region(0, CODE_GUEST_PHYS, page as *mut u8, PAGE_SIZE as u64)
         .expect("set_user_memory_region");
@@ -52,8 +47,5 @@ fn real_mode_hlt() {
         other => panic!("expected Hlt, got {:?}", other),
     }
 
-    drop(vcpu);
-    unsafe {
-        libc::munmap(page, PAGE_SIZE);
-    }
+    unsafe { libc::munmap(page, PAGE_SIZE); }
 }

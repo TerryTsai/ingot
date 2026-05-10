@@ -12,11 +12,9 @@ mod vsock;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use block::Block;
 pub(crate) use bus::MmioBus;
-pub(crate) use net::Net;
 pub(crate) use uart::{Uart, UartInput};
-pub(crate) use vsock::Vsock;
+// block::Block, net::Net, vsock::Vsock re-exports added in Phase 3+ when used.
 
 pub(crate) trait MmioDevice: Send {
     fn read(&mut self, offset: u64, data: &mut [u8]) -> Result<(), GuestError>;

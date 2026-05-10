@@ -16,6 +16,7 @@ const REG_MCR: u64 = 4;
 const REG_LSR: u64 = 5;
 const REG_MSR: u64 = 6;
 const REG_SCR: u64 = 7;
+
 const LCR_DLAB: u8 = 0x80;
 const LSR_THRE_TEMT: u8 = 0x60;
 const LSR_DR: u8 = 0x01;
@@ -51,8 +52,7 @@ impl Uart {
     fn dlab(&self) -> bool { self.lcr & LCR_DLAB != 0 }
 
     fn lsr(&self) -> u8 {
-        let pending = !self.input.lock().unwrap().is_empty();
-        LSR_THRE_TEMT | if pending { LSR_DR } else { 0 }
+        LSR_THRE_TEMT | if self.input.lock().unwrap().is_empty() { 0 } else { LSR_DR }
     }
 }
 

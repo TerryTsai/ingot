@@ -1,12 +1,8 @@
 //! Ingot — minimal KVM-based VMM. See SPEC.md and docs/architecture.md.
-//!
-//! Phase 0 sketch: types and signatures only. Method bodies panic via
-//! `unimplemented!()`. Crate-level allows are sketch-scoped and removed
-//! as subsystems are implemented.
 
+// `dead_code` stays crate-wide while virtio devices and IRQ injection remain
+// placeholders. Real-bug allows (unused imports/variables) are not granted.
 #![allow(dead_code)]
-#![allow(unused_imports)]
-#![allow(unused_variables)]
 
 mod config;
 mod error;

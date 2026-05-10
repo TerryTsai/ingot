@@ -1,3 +1,6 @@
+// Phase 5 placeholder. virtio-vsock: caller-provided AF_VSOCK listener over MMIO virtqueues.
+#![allow(unused_variables)]
+
 use std::os::unix::io::RawFd;
 
 use super::{GuestError, Interrupt, MmioDevice};

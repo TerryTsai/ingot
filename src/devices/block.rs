@@ -1,3 +1,6 @@
+// Phase 3 placeholder. virtio-block: file-backed disk over MMIO virtqueues.
+#![allow(unused_variables)]
+
 use std::path::Path;
 
 use super::{GuestError, Interrupt, MmioDevice};

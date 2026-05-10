@@ -31,9 +31,7 @@ fn rejects_zero_vcpus() {
     let mut cfg = base();
     cfg.kernel_path = touch("zero_vcpus");
     cfg.vcpus = 0;
-    let r = Vm::new(cfg);
-    let _ = std::fs::remove_file("/tmp/x"); // best-effort
-    assert!(r.is_err());
+    assert!(Vm::new(cfg).is_err());
 }
 
 #[test]
