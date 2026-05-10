@@ -4,8 +4,9 @@
 //! resulting ExitStatus.
 
 use crate::outcome::ExitStatus;
+use crate::StdoutSink;
 
-use super::run_with_payload;
+use super::{run_with_payload, run_with_stdout};
 
 #[test]
 fn synthetic_hlt_kernel_reaches_halted() {
@@ -31,5 +32,26 @@ fn synthetic_pio_out_consumed_then_halted() {
     match run_with_payload("pio_out", &[0xee, 0xf4]) {
         Ok(outcome) => assert!(matches!(outcome.exit_status, ExitStatus::Halted)),
         Err(e) => eprintln!("[synthetic_pio_out_consumed_then_halted] skipped: {:?}", e),
+    }
+}
+
+#[test]
+fn synthetic_kernel_writes_hi_to_mmio_uart() {
+    // Long-mode payload that emits "Hi" through the MMIO UART at 0xD0000000
+    // (the THR register at offset 0) and halts.
+    //   48 B8 00 00 00 D0 00 00 00 00   mov rax, 0xD0000000
+    //   C6 00 48                         mov byte [rax], 'H'
+    //   C6 00 69                         mov byte [rax], 'i'
+    //   F4                               hlt
+    let payload = [
+        0x48, 0xb8, 0x00, 0x00, 0x00, 0xd0, 0x00, 0x00, 0x00, 0x00, 0xc6, 0x00, b'H', 0xc6, 0x00,
+        b'i', 0xf4,
+    ];
+    match run_with_stdout("uart_write", &payload, StdoutSink::Buffer) {
+        Ok(outcome) => {
+            assert!(matches!(outcome.exit_status, ExitStatus::Halted));
+            assert_eq!(outcome.stdout, b"Hi".to_vec());
+        }
+        Err(e) => eprintln!("[synthetic_kernel_writes_hi_to_mmio_uart] skipped: {:?}", e),
     }
 }

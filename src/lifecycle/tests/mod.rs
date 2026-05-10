@@ -9,6 +9,14 @@ use crate::{Config, IngotError, Outcome, StdoutSink, Vm};
 pub(super) const ENTRY_POINT: u64 = 0x10_0000;
 
 pub(super) fn run_with_payload(name: &str, payload: &[u8]) -> Result<Outcome, IngotError> {
+    run_with_stdout(name, payload, StdoutSink::Discard)
+}
+
+pub(super) fn run_with_stdout(
+    name: &str,
+    payload: &[u8],
+    stdout: StdoutSink,
+) -> Result<Outcome, IngotError> {
     let mut p = std::env::temp_dir();
     p.push(format!("ingot-synth-{}-{}.elf", name, std::process::id()));
     std::fs::write(&p, build_elf(payload)).expect("write tmp");
@@ -17,7 +25,7 @@ pub(super) fn run_with_payload(name: &str, payload: &[u8]) -> Result<Outcome, In
         vcpus: 1,
         memory_bytes: 16 * 1024 * 1024,
         cmdline: String::new(),
-        stdout: StdoutSink::Discard,
+        stdout,
         ..Config::default()
     };
     let result = Vm::new(cfg).and_then(|vm| vm.run());

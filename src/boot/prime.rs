@@ -51,13 +51,22 @@ fn build_sregs() -> kvm_sregs {
     s.fs = data_segment(DATA_SELECTOR);
     s.gs = data_segment(DATA_SELECTOR);
     s.ss = data_segment(DATA_SELECTOR);
+    setup_system(&mut s);
+    s
+}
+
+fn setup_system(s: &mut kvm_sregs) {
+    // VMX requires TR present with a 64-bit-TSS type; LDTR can be unusable.
+    s.tr.limit = 0xFFFF;
+    s.tr.type_ = 0xB;
+    s.tr.present = 1;
+    s.ldt.unusable = 1;
     s.gdt.base = GDT_ADDR;
     s.gdt.limit = GDT_LIMIT;
     s.cr0 = CR0_PE | CR0_NE | CR0_PG;
     s.cr3 = PML4_ADDR;
     s.cr4 = CR4_PAE;
     s.efer = EFER_LME | EFER_LMA;
-    s
 }
 
 fn code_segment(selector: u16) -> kvm_segment {

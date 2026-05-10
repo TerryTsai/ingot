@@ -10,7 +10,7 @@ use crate::guest_mem::GuestMem;
 use crate::kvm::{Kvm, VcpuFd, VmFd};
 use crate::outcome::Telemetry;
 
-use super::sink::{make_sink, maybe_spawn_stdin};
+use super::sink::{make_sink, maybe_spawn_stdin, Captured};
 use super::state::State;
 use super::validate::validate;
 
@@ -25,6 +25,7 @@ pub(crate) struct Runtime {
     pub vcpus: Vec<VcpuFd>,
     pub vm_fd: VmFd,
     pub mem: GuestMem,
+    pub captured_stdout: Captured,
     _kvm: Kvm,
 }
 
@@ -36,7 +37,7 @@ impl Runtime {
         let mem = GuestMem::new(config.memory_bytes)?;
         vm_fd.set_user_memory_region(0, 0, mem.host_ptr(), config.memory_bytes)?;
         let vcpus = make_vcpus(&vm_fd, config.vcpus)?;
-        let bus = make_bus(&config)?;
+        let (bus, captured_stdout) = make_bus(&config)?;
         Ok(Runtime {
             telemetry: fresh_telemetry(),
             state: State::Configured,
@@ -44,6 +45,7 @@ impl Runtime {
             vcpus,
             vm_fd,
             mem,
+            captured_stdout,
             config,
             _kvm: kvm,
         })
@@ -58,13 +60,13 @@ fn make_vcpus(vm: &VmFd, count: u8) -> Result<Vec<VcpuFd>, IngotError> {
     Ok(v)
 }
 
-fn make_bus(config: &Config) -> Result<MmioBus, IngotError> {
+fn make_bus(config: &Config) -> Result<(MmioBus, Captured), IngotError> {
     let mut bus = MmioBus::new();
-    let sink = make_sink(&config.stdout)?;
+    let (sink, captured) = make_sink(&config.stdout)?;
     let uart = Uart::new(sink);
     maybe_spawn_stdin(uart.input_handle(), config.interactive);
     bus.register(UART_BASE, UART_SIZE, Box::new(uart))?;
-    Ok(bus)
+    Ok((bus, captured))
 }
 
 fn fresh_telemetry() -> Telemetry {

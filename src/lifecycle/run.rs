@@ -5,7 +5,7 @@ use std::time::Instant;
 use crate::boot;
 use crate::error::{HostError, IngotError};
 use crate::guest_mem::GuestMem;
-use crate::kvm::VcpuExit;
+use crate::kvm::{KvmError, VcpuExit};
 use crate::outcome::{ExitStatus, Outcome};
 
 use super::runtime::Runtime;
@@ -19,11 +19,8 @@ pub(super) fn run(mut rt: Runtime) -> Result<Outcome, IngotError> {
     rt.telemetry.boot_completed_at = Some(Instant::now());
     let exit_status = run_loop(&mut rt)?;
     rt.telemetry.terminated_at = Some(Instant::now());
-    Ok(Outcome {
-        exit_status,
-        telemetry: rt.telemetry,
-        stdout: Vec::new(),
-    })
+    let stdout = rt.captured_stdout.as_ref().map(|b| b.lock().unwrap().clone()).unwrap_or_default();
+    Ok(Outcome { exit_status, telemetry: rt.telemetry, stdout })
 }
 
 fn boot_kernel(rt: &mut Runtime) -> Result<(), IngotError> {
@@ -67,13 +64,14 @@ fn read_file(p: &std::path::Path) -> std::io::Result<Vec<u8>> {
 
 fn run_loop(rt: &mut Runtime) -> Result<ExitStatus, IngotError> {
     loop {
-        match rt.vcpus[0].run()? {
+        let exit = rt.vcpus[0].run()?;
+        match exit {
             VcpuExit::Hlt | VcpuExit::Shutdown => return Ok(ExitStatus::Halted),
             VcpuExit::MmioRead { addr, len } => handle_mmio_read(rt, addr, len)?,
             VcpuExit::MmioWrite { addr, data, len } => rt.bus.write(addr, &data[..len])?,
             VcpuExit::IoIn { len, .. } => handle_pio_in(rt, len),
             VcpuExit::IoOut { .. } => {}
-            VcpuExit::Other(_) => return Ok(ExitStatus::Halted),
+            VcpuExit::Other(r) => return Err(IngotError::Kvm(KvmError::UnhandledExit(r))),
         }
     }
 }
