@@ -368,8 +368,13 @@ src/
   outcome.rs            — Outcome, ExitStatus, GuestFaultReason, Telemetry, TransitionEvent
   guest_mem.rs          — GuestMem
   kvm/
-    mod.rs              — Kvm, VmFd, VcpuFd, VcpuExit, RegState, KvmError
-    bindings.rs         — minimal raw ioctl wrappers (later)
+    mod.rs              — module declarations, RegState, KvmError, error helpers
+    ioctls.rs           — KVM ioctl request numbers (computed; kvm-bindings does not expose them)
+    host.rs             — Kvm: open, create_vm
+    vm.rs               — VmFd: set_user_memory_region, create_vcpu
+    vcpu.rs             — VcpuFd: get/set regs, run, Drop
+    exit.rs             — VcpuExit + kvm_run union decoders
+    tests/              — unit tests, organized by the file under test
   boot/
     mod.rs              — KernelImage, InitramfsImage, BootParams, load/build/prime
     elf.rs              — ELF parsing (later)

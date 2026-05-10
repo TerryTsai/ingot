@@ -5,3 +5,7 @@ edition = "2021"
 license = "Apache-2.0"
 description = "Minimal KVM-based VMM for ephemeral, hardware-isolated microVMs"
 publish = false
+
+[dependencies]
+libc = "0.2"
+kvm-bindings = "0.14"
