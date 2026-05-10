@@ -4,7 +4,7 @@
 //! resulting ExitStatus.
 
 use crate::outcome::ExitStatus;
-use crate::StdoutSink;
+use crate::{State, StdoutSink};
 
 use super::{run_with_payload, run_with_stdout};
 
@@ -32,6 +32,25 @@ fn synthetic_pio_out_consumed_then_halted() {
     match run_with_payload("pio_out", &[0xee, 0xf4]) {
         Ok(outcome) => assert!(matches!(outcome.exit_status, ExitStatus::Halted)),
         Err(e) => eprintln!("[synthetic_pio_out_consumed_then_halted] skipped: {:?}", e),
+    }
+}
+
+#[test]
+fn telemetry_records_full_state_transition_sequence() {
+    match run_with_payload("transitions", &[0xf4]) {
+        Ok(outcome) => {
+            let actual: Vec<_> = outcome.telemetry.transitions.iter().map(|t| (t.from, t.to)).collect();
+            assert_eq!(actual, vec![
+                (State::Configured, State::Initializing),
+                (State::Initializing, State::Booting),
+                (State::Booting, State::Running),
+                (State::Running, State::Exiting),
+                (State::Exiting, State::Terminated),
+            ]);
+            assert!(outcome.telemetry.boot_started_at <= outcome.telemetry.boot_completed_at.unwrap());
+            assert!(outcome.telemetry.boot_completed_at.unwrap() <= outcome.telemetry.terminated_at.unwrap());
+        }
+        Err(e) => eprintln!("[telemetry_records_full_state_transition_sequence] skipped: {:?}", e),
     }
 }
 

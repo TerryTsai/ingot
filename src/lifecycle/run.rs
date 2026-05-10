@@ -6,21 +6,35 @@ use crate::boot;
 use crate::error::{HostError, IngotError};
 use crate::guest_mem::GuestMem;
 use crate::kvm::{KvmError, VcpuExit};
-use crate::outcome::{ExitStatus, Outcome};
+use crate::outcome::{ExitStatus, Outcome, TransitionEvent};
 
 use super::runtime::Runtime;
+use super::state::{transition, State};
 
 const CMDLINE_ADDR: u64 = 0x2_0000;
 const BOOT_PARAMS_ADDR: u64 = 0x7000;
 const CMDLINE_MAX: u32 = 2048;
 
 pub(super) fn run(mut rt: Runtime) -> Result<Outcome, IngotError> {
+    step(&mut rt, State::Initializing)?;
     boot_kernel(&mut rt)?;
+    step(&mut rt, State::Booting)?;
     rt.telemetry.boot_completed_at = Some(Instant::now());
+    step(&mut rt, State::Running)?;
     let exit_status = run_loop(&mut rt)?;
+    step(&mut rt, State::Exiting)?;
     rt.telemetry.terminated_at = Some(Instant::now());
+    step(&mut rt, State::Terminated)?;
     let stdout = rt.captured_stdout.as_ref().map(|b| b.lock().unwrap().clone()).unwrap_or_default();
     Ok(Outcome { exit_status, telemetry: rt.telemetry, stdout })
+}
+
+fn step(rt: &mut Runtime, to: State) -> Result<(), IngotError> {
+    let new = transition(rt.state, to)
+        .map_err(|_| IngotError::Host(HostError::InvalidConfig("illegal state transition")))?;
+    rt.telemetry.transitions.push(TransitionEvent { at: Instant::now(), from: rt.state, to: new });
+    rt.state = new;
+    Ok(())
 }
 
 fn boot_kernel(rt: &mut Runtime) -> Result<(), IngotError> {
