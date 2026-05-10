@@ -8,6 +8,7 @@ pub struct Outcome {
     pub stdout: Vec<u8>,
 }
 
+#[derive(Debug)]
 pub enum ExitStatus {
     Halted,
     KernelPanic,
@@ -15,6 +16,7 @@ pub enum ExitStatus {
     ResourceExhausted,
 }
 
+#[derive(Debug)]
 pub enum GuestFaultReason {
     MalformedDescriptor,
     DescriptorOutOfBounds,

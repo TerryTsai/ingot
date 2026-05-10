@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use crate::devices::GuestError;
 use crate::kvm::KvmError;
 
+#[derive(Debug)]
 pub enum IngotError {
     Kvm(KvmError),
     Guest(GuestError),
@@ -27,6 +28,7 @@ impl From<HostError> for IngotError {
     }
 }
 
+#[derive(Debug)]
 pub enum HostError {
     KernelImageNotReadable(PathBuf),
     InitramfsNotReadable(PathBuf),

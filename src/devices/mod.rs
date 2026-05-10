@@ -40,6 +40,7 @@ impl MmioBus {
     }
 }
 
+#[derive(Debug)]
 pub enum GuestError {
     MalformedDescriptor,
     DescriptorOutOfBounds,

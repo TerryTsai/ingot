@@ -1,6 +1,12 @@
 //! Linux x86_64 boot protocol.
 //!
-//! Phase 2 deliverable. Currently a sketch.
+//! Phase 2 in progress. ELF loading is implemented; page tables,
+//! boot_params, initramfs placement, and register priming follow.
+
+mod elf;
+
+#[cfg(test)]
+mod tests;
 
 use crate::error::HostError;
 use crate::guest_mem::GuestMem;
@@ -21,7 +27,7 @@ pub struct BootParams {
 }
 
 pub fn load_kernel(image: &[u8], mem: &mut GuestMem) -> Result<KernelImage, HostError> {
-    unimplemented!()
+    elf::load(image, mem)
 }
 
 pub fn load_initramfs(
