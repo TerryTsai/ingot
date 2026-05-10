@@ -1,13 +1,19 @@
 //! virtio devices and 8250 UART. MMIO transport only.
 //!
-//! Phases 2-5 deliverable. Currently a sketch.
+//! UART and MmioBus are real (Phase 2). The virtio devices remain
+//! sketches until Phases 3–5.
 
 mod block;
+mod bus;
 mod net;
 mod uart;
 mod vsock;
 
+#[cfg(test)]
+mod tests;
+
 pub(crate) use block::Block;
+pub(crate) use bus::MmioBus;
 pub(crate) use net::Net;
 pub(crate) use uart::Uart;
 pub(crate) use vsock::Vsock;
@@ -20,24 +26,6 @@ pub(crate) trait MmioDevice: Send {
 
 pub(crate) struct Interrupt {
     pub gsi: u32,
-}
-
-pub(crate) struct MmioBus {
-    _placeholder: (),
-}
-
-impl MmioBus {
-    pub fn new() -> Self {
-        unimplemented!()
-    }
-
-    pub fn read(&mut self, addr: u64, data: &mut [u8]) -> Result<(), GuestError> {
-        unimplemented!()
-    }
-
-    pub fn write(&mut self, addr: u64, data: &[u8]) -> Result<(), GuestError> {
-        unimplemented!()
-    }
 }
 
 #[derive(Debug)]
