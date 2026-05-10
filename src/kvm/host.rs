@@ -22,7 +22,7 @@ impl Kvm {
         }
         let fd = unsafe { OwnedFd::from_raw_fd(raw) };
         let api = check(
-            unsafe { libc::ioctl(fd.as_raw_fd(), KVM_GET_API_VERSION) },
+            unsafe { libc::ioctl(fd.as_raw_fd(), KVM_GET_API_VERSION, 0) },
             "KVM_GET_API_VERSION",
         )?;
         if api as u32 != KVM_API_VERSION {
@@ -32,7 +32,7 @@ impl Kvm {
             });
         }
         let mmap = check(
-            unsafe { libc::ioctl(fd.as_raw_fd(), KVM_GET_VCPU_MMAP_SIZE) },
+            unsafe { libc::ioctl(fd.as_raw_fd(), KVM_GET_VCPU_MMAP_SIZE, 0) },
             "KVM_GET_VCPU_MMAP_SIZE",
         )?;
         Ok(Kvm {
