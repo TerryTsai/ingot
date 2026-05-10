@@ -1,11 +1,9 @@
 //! Linux x86_64 boot protocol.
-//!
-//! Phase 2 in progress. ELF loading, identity-mapped page tables, the
-//! long-mode GDT, and register priming for direct kernel entry are in
-//! place. boot_params construction and initramfs placement follow.
 
+mod boot_params;
 mod elf;
 mod gdt;
+mod initramfs;
 mod pagetables;
 mod prime;
 
@@ -15,6 +13,8 @@ mod tests;
 use crate::error::HostError;
 use crate::guest_mem::GuestMem;
 use crate::kvm::RegState;
+
+pub use boot_params::BootParams;
 
 pub struct KernelImage {
     pub entry_point: u64,
@@ -26,10 +26,6 @@ pub struct InitramfsImage {
     pub size: u64,
 }
 
-pub struct BootParams {
-    _placeholder: (),
-}
-
 pub fn load_kernel(image: &[u8], mem: &mut GuestMem) -> Result<KernelImage, HostError> {
     elf::load(image, mem)
 }
@@ -39,16 +35,24 @@ pub fn load_initramfs(
     mem: &mut GuestMem,
     kernel: &KernelImage,
 ) -> Result<InitramfsImage, HostError> {
-    unimplemented!()
+    initramfs::load(image, mem, kernel)
 }
 
 pub fn build_boot_params(
-    kernel: &KernelImage,
     initramfs: Option<&InitramfsImage>,
-    cmdline: &str,
-    mmio_bus_addr: u64,
-) -> BootParams {
-    unimplemented!()
+    cmdline_addr: u64,
+    cmdline_max: u32,
+    mem_size: u64,
+) -> Result<BootParams, HostError> {
+    let mut bp = BootParams::new();
+    bp.set_cmdline(cmdline_addr, cmdline_max);
+    if let Some(img) = initramfs {
+        bp.set_initramfs(img.start_addr, img.size as u32);
+    }
+    bp.add_e820_entry(0, 0xA_0000, boot_params::E820_RAM)?;
+    bp.add_e820_entry(0xA_0000, 0x6_0000, boot_params::E820_RESERVED)?;
+    bp.add_e820_entry(0x10_0000, mem_size - 0x10_0000, boot_params::E820_RAM)?;
+    Ok(bp)
 }
 
 pub fn prime_vcpu(

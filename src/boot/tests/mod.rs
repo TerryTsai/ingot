@@ -1,7 +1,9 @@
 //! Boot subsystem tests. Synthetic-ELF helpers + per-component test files.
 
+mod boot_params;
 mod elf;
 mod gdt;
+mod initramfs;
 mod pagetables;
 mod prime;
 
