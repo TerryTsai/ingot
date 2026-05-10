@@ -6,7 +6,7 @@ use crate::boot;
 use crate::error::{HostError, IngotError};
 use crate::guest_mem::GuestMem;
 use crate::kvm::{KvmError, VcpuExit};
-use crate::outcome::{ExitStatus, Outcome, TransitionEvent};
+use crate::outcome::{ExitStatus, GuestFaultReason, Outcome, TransitionEvent};
 
 use super::runtime::Runtime;
 use super::state::{transition, State};
@@ -69,9 +69,9 @@ fn write_cmdline(mem: &mut GuestMem, cmdline: &str) -> Result<(), IngotError> {
 
 fn run_loop(rt: &mut Runtime) -> Result<ExitStatus, IngotError> {
     loop {
-        let exit = rt.vcpus[0].run()?;
-        match exit {
-            VcpuExit::Hlt | VcpuExit::Shutdown => return Ok(ExitStatus::Halted),
+        match rt.vcpus[0].run()? {
+            VcpuExit::Hlt => return Ok(ExitStatus::Halted),
+            VcpuExit::Shutdown => return Ok(ExitStatus::GuestFault(GuestFaultReason::TripleFault)),
             VcpuExit::MmioRead { addr, len } => handle_mmio_read(rt, addr, len)?,
             VcpuExit::MmioWrite { addr, data, len } => rt.bus.write(addr, &data[..len])?,
             VcpuExit::IoIn { len, .. } => handle_pio_in(rt, len),

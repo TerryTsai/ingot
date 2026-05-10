@@ -23,6 +23,11 @@ pub enum GuestFaultReason {
     DescriptorChainCycle,
     UnexpectedPio,
     MmioOutOfRange,
+    /// CPU shut down. On x86_64 this is almost always a triple fault —
+    /// the guest's exception handlers themselves faulted, so the CPU
+    /// gave up. Common early-boot causes: no IDT (so any #PF/#GP cascades),
+    /// stack misalignment, invalid MSR write.
+    TripleFault,
 }
 
 pub struct Telemetry {
