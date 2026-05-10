@@ -95,6 +95,14 @@ impl VcpuFd {
         let n = data.len().min(8);
         mmio.data[..n].copy_from_slice(&data[..n]);
     }
+
+    pub fn set_pio_read_data(&mut self, data: &[u8]) {
+        let run = unsafe { &*self.run_ptr };
+        let io = unsafe { &run.__bindgen_anon_1.io };
+        let dst = unsafe { (self.run_ptr as *mut u8).add(io.data_offset as usize) };
+        let n = data.len().min(io.size as usize);
+        unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), dst, n); }
+    }
 }
 
 impl Drop for VcpuFd {

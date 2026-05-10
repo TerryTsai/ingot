@@ -1,16 +1,16 @@
 //! Runtime: KVM, guest memory, vCPUs, MMIO bus, telemetry. Constructed
 //! by `Vm::new`; consumed by `lifecycle::run`.
 
-use std::io::Write;
 use std::time::Instant;
 
-use crate::config::{Config, StdoutSink};
+use crate::config::Config;
 use crate::devices::{MmioBus, Uart};
-use crate::error::{HostError, IngotError};
+use crate::error::IngotError;
 use crate::guest_mem::GuestMem;
 use crate::kvm::{Kvm, VcpuFd, VmFd};
 use crate::outcome::Telemetry;
 
+use super::sink::{make_sink, maybe_spawn_stdin};
 use super::state::State;
 use super::validate::validate;
 
@@ -36,7 +36,7 @@ impl Runtime {
         let mem = GuestMem::new(config.memory_bytes)?;
         vm_fd.set_user_memory_region(0, 0, mem.host_ptr(), config.memory_bytes)?;
         let vcpus = make_vcpus(&vm_fd, config.vcpus)?;
-        let bus = make_bus(&config.stdout)?;
+        let bus = make_bus(&config)?;
         Ok(Runtime {
             telemetry: fresh_telemetry(),
             state: State::Configured,
@@ -58,32 +58,13 @@ fn make_vcpus(vm: &VmFd, count: u8) -> Result<Vec<VcpuFd>, IngotError> {
     Ok(v)
 }
 
-fn make_bus(stdout: &StdoutSink) -> Result<MmioBus, IngotError> {
+fn make_bus(config: &Config) -> Result<MmioBus, IngotError> {
     let mut bus = MmioBus::new();
-    let sink = make_sink(stdout)?;
-    bus.register(UART_BASE, UART_SIZE, Box::new(Uart::new(sink)))?;
+    let sink = make_sink(&config.stdout)?;
+    let uart = Uart::new(sink);
+    maybe_spawn_stdin(uart.input_handle(), config.interactive);
+    bus.register(UART_BASE, UART_SIZE, Box::new(uart))?;
     Ok(bus)
-}
-
-fn make_sink(s: &StdoutSink) -> Result<Box<dyn Write + Send>, HostError> {
-    use std::fs::File;
-    use std::os::fd::FromRawFd;
-    match s {
-        StdoutSink::Discard => Ok(Box::new(std::io::sink())),
-        StdoutSink::File(p) => File::create(p)
-            .map(|f| Box::new(f) as Box<dyn Write + Send>)
-            .map_err(|_| HostError::InvalidConfig("could not open stdout file")),
-        StdoutSink::Fd(fd) => {
-            let dup = unsafe { libc::dup(*fd) };
-            if dup < 0 {
-                return Err(HostError::InvalidConfig("dup failed for StdoutSink::Fd"));
-            }
-            Ok(Box::new(unsafe { File::from_raw_fd(dup) }))
-        }
-        StdoutSink::Buffer => Err(HostError::InvalidConfig(
-            "StdoutSink::Buffer not yet supported",
-        )),
-    }
 }
 
 fn fresh_telemetry() -> Telemetry {

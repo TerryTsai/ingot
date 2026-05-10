@@ -4,6 +4,7 @@
 
 mod run;
 mod runtime;
+mod sink;
 mod state;
 mod validate;
 

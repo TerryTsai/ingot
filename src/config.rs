@@ -12,6 +12,10 @@ pub struct Config {
     pub memory_bytes: u64,
     pub cmdline: String,
     pub stdout: StdoutSink,
+    /// When true, lifecycle spawns a thread reading host stdin and
+    /// feeds bytes into the UART's input queue. CLI sets this; library
+    /// callers leave it false.
+    pub interactive: bool,
 }
 
 pub struct BlockSpec {

@@ -15,7 +15,7 @@ mod tests;
 pub(crate) use block::Block;
 pub(crate) use bus::MmioBus;
 pub(crate) use net::Net;
-pub(crate) use uart::Uart;
+pub(crate) use uart::{Uart, UartInput};
 pub(crate) use vsock::Vsock;
 
 pub(crate) trait MmioDevice: Send {

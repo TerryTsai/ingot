@@ -21,6 +21,35 @@ fn lsr_reports_thr_empty() {
 }
 
 #[test]
+fn lsr_reports_data_ready_when_input_pending() {
+    let (sink, _) = new_capture();
+    let uart = Uart::new(sink);
+    let input = uart.input_handle();
+    input.push(b'q');
+    let mut uart = uart;
+    let mut buf = [0u8; 1];
+    uart.read(5, &mut buf).unwrap();
+    assert_eq!(buf[0] & 0x01, 0x01, "DR bit set");
+}
+
+#[test]
+fn rbr_pops_pushed_input() {
+    let (sink, _) = new_capture();
+    let uart = Uart::new(sink);
+    let input = uart.input_handle();
+    input.push(b'a');
+    input.push(b'b');
+    let mut uart = uart;
+    let mut buf = [0u8; 1];
+    uart.read(0, &mut buf).unwrap();
+    assert_eq!(buf[0], b'a');
+    uart.read(0, &mut buf).unwrap();
+    assert_eq!(buf[0], b'b');
+    uart.read(0, &mut buf).unwrap();
+    assert_eq!(buf[0], 0, "empty queue reads as 0");
+}
+
+#[test]
 fn iir_reports_no_interrupt() {
     let (sink, _) = new_capture();
     let mut uart = Uart::new(sink);
@@ -33,11 +62,11 @@ fn iir_reports_no_interrupt() {
 fn dlab_toggles_register_zero_one() {
     let (sink, captured) = new_capture();
     let mut uart = Uart::new(sink);
-    uart.write(3, &[0x80]).unwrap(); // LCR DLAB=1
-    uart.write(0, &[0x12]).unwrap(); // DLL — not THR
-    uart.write(1, &[0x34]).unwrap(); // DLM — not IER
-    uart.write(3, &[0x03]).unwrap(); // LCR DLAB=0
-    uart.write(0, &[b'A']).unwrap(); // THR
+    uart.write(3, &[0x80]).unwrap();
+    uart.write(0, &[0x12]).unwrap();
+    uart.write(1, &[0x34]).unwrap();
+    uart.write(3, &[0x03]).unwrap();
+    uart.write(0, &[b'A']).unwrap();
     assert_eq!(*captured.lock().unwrap(), b"A".to_vec());
 }
 
@@ -45,8 +74,7 @@ fn dlab_toggles_register_zero_one() {
 fn rejects_oversized_access() {
     let (sink, _) = new_capture();
     let mut uart = Uart::new(sink);
-    let r = uart.write(0, &[0xAA, 0xBB]);
-    assert!(r.is_err());
+    assert!(uart.write(0, &[0xAA, 0xBB]).is_err());
 }
 
 #[test]
@@ -54,8 +82,7 @@ fn rejects_offset_past_end() {
     let (sink, _) = new_capture();
     let mut uart = Uart::new(sink);
     let mut buf = [0u8; 1];
-    let r = uart.read(8, &mut buf);
-    assert!(r.is_err());
+    assert!(uart.read(8, &mut buf).is_err());
 }
 
 #[test]

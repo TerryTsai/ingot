@@ -6,7 +6,7 @@ use crate::boot;
 use crate::error::{HostError, IngotError};
 use crate::guest_mem::GuestMem;
 use crate::kvm::VcpuExit;
-use crate::outcome::{ExitStatus, GuestFaultReason, Outcome};
+use crate::outcome::{ExitStatus, Outcome};
 
 use super::runtime::Runtime;
 
@@ -71,9 +71,8 @@ fn run_loop(rt: &mut Runtime) -> Result<ExitStatus, IngotError> {
             VcpuExit::Hlt | VcpuExit::Shutdown => return Ok(ExitStatus::Halted),
             VcpuExit::MmioRead { addr, len } => handle_mmio_read(rt, addr, len)?,
             VcpuExit::MmioWrite { addr, data, len } => rt.bus.write(addr, &data[..len])?,
-            VcpuExit::IoIn { .. } | VcpuExit::IoOut { .. } => {
-                return Ok(ExitStatus::GuestFault(GuestFaultReason::UnexpectedPio));
-            }
+            VcpuExit::IoIn { len, .. } => handle_pio_in(rt, len),
+            VcpuExit::IoOut { .. } => {}
             VcpuExit::Other(_) => return Ok(ExitStatus::Halted),
         }
     }
@@ -84,4 +83,12 @@ fn handle_mmio_read(rt: &mut Runtime, addr: u64, len: usize) -> Result<(), Ingot
     rt.bus.read(addr, &mut buf[..len])?;
     rt.vcpus[0].set_mmio_read_data(&buf[..len]);
     Ok(())
+}
+
+/// Unhandled PIO read: return 0xFF for each byte (the "no device
+/// present" convention that lets the kernel proceed without thinking
+/// it found something at the port).
+fn handle_pio_in(rt: &mut Runtime, len: usize) {
+    let bytes = [0xFFu8; 4];
+    rt.vcpus[0].set_pio_read_data(&bytes[..len.min(4)]);
 }
