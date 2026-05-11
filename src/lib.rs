@@ -13,6 +13,7 @@ mod config;
 mod error;
 mod memory;
 mod outcome;
+mod seccomp;
 mod state;
 
 mod boot;
@@ -25,5 +26,6 @@ pub use devices::GuestError;
 pub use error::{HostError, IngotError};
 pub use kvm::KvmError;
 pub use outcome::{ExitStatus, GuestFaultReason, Outcome, Telemetry, TransitionEvent};
+pub use seccomp::{install as install_seccomp, Mode as SeccompMode};
 pub use state::State;
 pub use vm::Vm;

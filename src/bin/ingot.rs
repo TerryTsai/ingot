@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Instant;
 
-use ingot::{BlockSpec, Config, Outcome, StdoutSink, Vm, VsockSpec};
+use ingot::{install_seccomp, BlockSpec, Config, Outcome, SeccompMode, StdoutSink, Vm, VsockSpec};
 
 fn parse_rootfs(value: &str) -> BlockSpec {
     let (path, readonly) = match value.strip_suffix(":ro") {
@@ -29,13 +29,19 @@ fn cli(args: &[String]) -> Result<(), u8> {
     if args.len() < 2 || args[1] != "run" {
         eprintln!("usage: ingot run --kernel PATH [--initramfs PATH] [--rootfs PATH[:ro]]");
         eprintln!("                 [--memory MiB] [--cmdline STR] [--tap NAME]");
-        eprintln!("                 [--vsock-cid N] [--timing]");
+        eprintln!("                 [--vsock-cid N] [--timing] [--seccomp log|strict]");
         return Err(2);
     }
-    let (config, timing) = parse_config(&args[2..])?;
+    let (config, timing, seccomp) = parse_config(&args[2..])?;
     let t_new_start = Instant::now();
     let vm = Vm::new(config).map_err(|e| { eprintln!("ingot: {:?}", e); 1u8 })?;
     let t_new_done = Instant::now();
+    if let Some(mode) = seccomp {
+        if let Err(e) = install_seccomp(mode) {
+            eprintln!("ingot: seccomp install failed: {e:?}");
+            return Err(1);
+        }
+    }
     let outcome = vm.run().map_err(|e| { eprintln!("ingot: {:?}", e); 1u8 })?;
     eprintln!("ingot: exit={:?}", outcome.exit_status);
     if timing { report_timing(&outcome, t_new_start, t_new_done); }
@@ -56,15 +62,25 @@ fn report_timing(outcome: &Outcome, t_new_start: Instant, t_new_done: Instant) {
     }
 }
 
-fn parse_config(args: &[String]) -> Result<(Config, bool), u8> {
+fn parse_config(args: &[String]) -> Result<(Config, bool, Option<SeccompMode>), u8> {
     let mut config = default_config();
     let mut timing = false;
+    let mut seccomp: Option<SeccompMode> = None;
     let mut i = 0;
     while i < args.len() {
         if args[i] == "--timing" { timing = true; i += 1; continue; }
+        if args[i] == "--seccomp" {
+            if i + 1 >= args.len() { eprintln!("ingot: --seccomp needs log|strict"); return Err(2); }
+            seccomp = match args[i+1].as_str() {
+                "log" => Some(SeccompMode::Log),
+                "strict" => Some(SeccompMode::Strict),
+                other => { eprintln!("ingot: --seccomp {other}? expected log or strict"); return Err(2); }
+            };
+            i += 2; continue;
+        }
         i = apply_arg(args, i, &mut config)?;
     }
-    Ok((config, timing))
+    Ok((config, timing, seccomp))
 }
 
 fn apply_arg(args: &[String], i: usize, c: &mut Config) -> Result<usize, u8> {

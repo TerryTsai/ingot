@@ -52,14 +52,14 @@ Four boundaries, each with its own contract. SPEC §3.3 is authoritative for the
 **Adversary model:** in the Phase 7 jailer's world, the VMM is *suspect* even though it sits on the trusted side of the guest boundary. A bug in our virtio code could be exploited by a hostile guest to make the VMM perform syscalls it shouldn't. The seccomp filter limits the damage.
 
 **Threats:**
-- VMM is exploited via a virtio bug and tries to `unlinkat`, `execve`, `socket(AF_UNIX)`, etc. *Mitigation (Phase 7, not yet implemented):* seccomp BPF filter built from the syscall set we provably need: `read`, `write`, `pread64`, `pwrite64`, `mmap`, `munmap`, `ioctl` (allowlisted on `/dev/kvm` and TAP fds), `clock_gettime`, `nanosleep`, `futex`, `epoll_wait`. Adding a new syscall requires written justification.
-- VMM holds privileges it doesn't need. *Mitigation (Phase 7):* drop everything but `CAP_NET_ADMIN` (only required briefly during TAP setup, then dropped) before entering the run loop.
+- VMM is exploited via a virtio bug and tries to `unlinkat`, `execve`, `socket(AF_UNIX)`, etc. *Mitigation (in-process):* seccomp BPF filter installed via `--seccomp strict` (or programmatically via `install_seccomp(Mode::Strict)`). Source of truth is the `ALLOW` constant in `src/seccomp.rs`; current list is `ioctl, read, write, pread64, pwrite64, mmap, munmap, mprotect, brk, madvise, futex, clock_gettime, clock_nanosleep, nanosleep, restart_syscall, rt_sig*, setitimer, sigaltstack, close, fcntl, exit, exit_group, gettid, getpid, writev, lseek, fstat, statx, newfstatat, openat, getrandom, poll, ppoll, sched_yield`. Adding a syscall requires updating that array — each line carries the justification comment.
+- VMM holds privileges it doesn't need. *Mitigation (Phase 7 jailer, not yet implemented):* drop everything but `CAP_NET_ADMIN` (only required briefly during TAP setup, then dropped) before `execve`'ing the VMM binary.
 
 ### 1.4 Jailer ↔ host
 
 **Contract:** the jailer runs with elevated privileges briefly to set up isolation primitives, then drops privileges and `execve`s the VMM binary.
 
-**Phase 7, not yet implemented.** The boundary's job will be to make the privilege window the smallest possible: no long-lived elevated process.
+**Partially implemented.** The in-process seccomp filter (§1.3) is the syscall half of the jailer's job; the namespaces / cgroups / privilege-drop half lives in the not-yet-built `ingot-jailer` binary. Until that exists, deploy the VMM under whatever isolation the operator's existing infrastructure provides (systemd `--user`, podman `--isolation`, etc.).
 
 ## 2. Validation philosophy
 
