@@ -5,9 +5,12 @@ mod block;
 mod mmio_bus;
 mod net;
 mod uart;
+mod virtio_mmio;
+mod virtio_queue;
 mod vsock;
 
 pub(crate) use mmio_bus::MmioBus;
+pub(crate) use net::Net;
 pub(crate) use uart::{Uart, UartInput, COM1_BASE, COM1_GSI, COM1_LAST};
 
 pub(crate) trait MmioDevice: Send {

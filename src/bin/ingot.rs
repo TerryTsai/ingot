@@ -62,7 +62,7 @@ fn default_config() -> Config {
     Config {
         vcpus: 1,
         memory_bytes: 128 * 1024 * 1024,
-        cmdline: "console=ttyS0,115200 reboot=k panic=1".into(),
+        cmdline: "console=ttyS0,115200 virtio_mmio.device=4K@0xd0000000:5 reboot=k panic=1".into(),
         stdout: StdoutSink::Fd(1),
         interactive: true,
         ..Config::default()

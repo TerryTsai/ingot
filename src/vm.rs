@@ -17,7 +17,7 @@ use std::time::Instant;
 
 use crate::boot::{self, ElfLoader, Initramfs, Kernel, MpTable, VcpuPrimer};
 use crate::config::{Config, StdoutSink};
-use crate::devices::{MmioBus, Uart, UartInput, COM1_BASE, COM1_GSI, COM1_LAST};
+use crate::devices::{MmioBus, Net, Uart, UartInput, COM1_BASE, COM1_GSI, COM1_LAST};
 use crate::error::{HostError, IngotError};
 use crate::kvm::{Cpuid, KvmError, KvmFd, VcpuExit, VcpuFd, VmFd};
 use crate::memory::Memory;
@@ -39,6 +39,13 @@ const CMDLINE_LIMIT: usize = 2048;
 /// CMOS Status A's "Update In Progress" bit and hang the kernel.
 const CMOS_INDEX: u16 = 0x70;
 const CMOS_DATA: u16 = 0x71;
+/// virtio-mmio net device: 4 KiB region the kernel learns about via the
+/// `virtio_mmio.device=4K@<addr>:<irq>` cmdline parameter. IRQ 5 keeps
+/// us clear of legacy ISA assignments (timer=0, UART=4, RTC=8).
+const VIRTIO_NET_BASE: u64 = 0xD000_0000;
+const VIRTIO_NET_SIZE: u64 = 0x1000;
+const VIRTIO_NET_GSI: u32 = 5;
+const VIRTIO_NET_MAC: [u8; 6] = [0x52, 0x54, 0x00, 0xC0, 0xFF, 0xEE];
 
 type Captured = Option<Arc<Mutex<Vec<u8>>>>;
 
@@ -69,7 +76,8 @@ impl Vm {
         let cpuid = kvm.supported_cpuid()?;
         let vcpus = Self::make_vcpus(&vm_fd, config.vcpus, &cpuid)?;
         let (uart, captured_stdout) = Self::make_uart(&config)?;
-        let bus = MmioBus::new();
+        let mut bus = MmioBus::new();
+        bus.register(VIRTIO_NET_BASE, VIRTIO_NET_SIZE, Box::new(Net::new(VIRTIO_NET_MAC)))?;
         Ok(Vm {
             telemetry: Self::fresh_telemetry(),
             state: State::Configured,
