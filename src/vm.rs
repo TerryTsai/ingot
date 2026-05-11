@@ -51,6 +51,10 @@ const VIRTIO_BLK_SIZE: u64 = 0x1000;
 
 type Captured = Option<Arc<Mutex<Vec<u8>>>>;
 
+/// A configured microVM, ready to run. Construct with [`Vm::new`] and
+/// consume with [`Vm::run`]. The library API is two methods because the
+/// state machine is fixed: caller validates config, ingot constructs a
+/// VM, caller drives it to completion, caller reads the [`Outcome`].
 pub struct Vm {
     config: Config,
     state: State,
@@ -66,6 +70,27 @@ pub struct Vm {
 }
 
 impl Vm {
+    /// Allocate KVM resources and prepare a VM to run. Returns errors as
+    /// `IngotError` — typed across the three domains (`KvmError`,
+    /// `GuestError`, `HostError`) so callers can match on what went
+    /// wrong. Panics are bugs.
+    ///
+    /// ```no_run
+    /// # use ingot::{Config, StdoutSink, Vm};
+    /// # use std::path::PathBuf;
+    /// let cfg = Config {
+    ///     kernel_path: PathBuf::from("/path/to/vmlinux"),
+    ///     initramfs_path: Some(PathBuf::from("/path/to/initramfs.cpio.gz")),
+    ///     vcpus: 1,
+    ///     memory_bytes: 256 * 1024 * 1024,
+    ///     cmdline: "console=ttyS0,115200 reboot=k panic=1".into(),
+    ///     stdout: StdoutSink::Buffer,
+    ///     ..Config::default()
+    /// };
+    /// let outcome = Vm::new(cfg)?.run()?;
+    /// println!("guest stdout: {} bytes", outcome.stdout.len());
+    /// # Ok::<(), ingot::IngotError>(())
+    /// ```
     pub fn new(config: Config) -> Result<Self, IngotError> {
         Self::validate(&config)?;
         let kvm = KvmFd::open()?;
@@ -100,6 +125,15 @@ impl Vm {
         })
     }
 
+    /// Boot the kernel, run the workload to completion, capture and
+    /// return its outcome. Consumes the `Vm` — there is no resume; a
+    /// new VM is a new `Vm::new` call. Returns when the guest halts,
+    /// triple-faults, or `Vm::new`'s validation rejects mid-state.
+    ///
+    /// The returned [`Outcome`] carries the exit status, the captured
+    /// stdout (if `Config::stdout` was [`StdoutSink::Buffer`]), and
+    /// telemetry — boot start/complete timestamps and the state-machine
+    /// transition log.
     pub fn run(mut self) -> Result<Outcome, IngotError> {
         self.step(State::Initializing)?;
         self.boot_kernel()?;
