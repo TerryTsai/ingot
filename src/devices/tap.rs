@@ -5,7 +5,7 @@
 //! frames sent toward this interface from the host side.
 
 use std::ffi::{c_int, c_short};
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 
 use crate::error::HostError;
 
@@ -58,7 +58,6 @@ impl Tap {
         }
     }
 
-    pub fn raw_fd(&self) -> RawFd { self.fd.as_raw_fd() }
 }
 
 fn errno() -> c_int { std::io::Error::last_os_error().raw_os_error().unwrap_or(0) }

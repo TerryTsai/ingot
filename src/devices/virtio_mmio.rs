@@ -72,8 +72,6 @@ impl VirtioMmio {
         None
     }
 
-    pub fn negotiated(&self) -> u64 { self.driver_feat }
-
     fn feature_slice(&self, sel: u32, features: u64) -> u32 {
         if sel == 0 { features as u32 } else if sel == 1 { (features >> 32) as u32 } else { 0 }
     }

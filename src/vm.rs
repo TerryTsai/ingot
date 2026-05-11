@@ -232,7 +232,7 @@ impl Vm {
         if config.memory_bytes < MIN_MEMORY {
             return Err(HostError::InvalidConfig("memory must be at least 16 MiB"));
         }
-        if config.memory_bytes % PAGE_SIZE != 0 {
+        if !config.memory_bytes.is_multiple_of(PAGE_SIZE) {
             return Err(HostError::InvalidConfig("memory must be page-aligned"));
         }
         if config.cmdline.len() > CMDLINE_LIMIT {

@@ -71,7 +71,7 @@ impl MpTable {
         buf.extend_from_slice(&IOAPIC_ADDR.to_le_bytes());
     }
 
-    fn finalize(buf: &mut Vec<u8>, cfg: usize, entries: u16) {
+    fn finalize(buf: &mut [u8], cfg: usize, entries: u16) {
         let cfg_len = (buf.len() - cfg) as u16;
         buf[cfg + CFG_LEN_OFFSET..cfg + CFG_LEN_OFFSET + 2].copy_from_slice(&cfg_len.to_le_bytes());
         buf[cfg + CFG_ENTRIES_OFFSET..cfg + CFG_ENTRIES_OFFSET + 2].copy_from_slice(&entries.to_le_bytes());

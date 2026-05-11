@@ -16,7 +16,7 @@ impl Initramfs {
     pub fn load(image: &[u8], mem: &mut Memory, kernel: &Kernel) -> Result<Self, HostError> {
         let start = (kernel.end_addr + PAGE_MASK) & !PAGE_MASK;
         let size = image.len() as u64;
-        if start.checked_add(size).map_or(true, |end| end > mem.size()) {
+        if start.checked_add(size).is_none_or(|end| end > mem.size()) {
             return Err(HostError::InvalidConfig("initramfs does not fit in guest memory"));
         }
         mem.write(start, image)

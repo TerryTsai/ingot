@@ -36,15 +36,11 @@ pub struct VsockSpec {
     pub guest_cid: u32,
 }
 
+#[derive(Default)]
 pub enum StdoutSink {
+    #[default]
     Discard,
     Buffer,
     File(PathBuf),
     Fd(RawFd),
-}
-
-impl Default for StdoutSink {
-    fn default() -> Self {
-        StdoutSink::Discard
-    }
 }
