@@ -28,10 +28,14 @@ pub(crate) const COM1_BASE: u16 = 0x3F8;
 pub(crate) const COM1_LAST: u16 = 0x3FF;
 pub(crate) const COM1_GSI: u32 = 4;
 
+/// `rx_armed` gates RBR access until the driver writes IER with RX-
+/// enable; 8250 startup reads RBR to clear stuck state and without the
+/// gate it silently consumes bytes our stdin thread had already queued.
 pub(crate) struct Uart {
     sink: Box<dyn Write + Send>,
     input: Arc<Mutex<VecDeque<u8>>>,
     ier: u8, fcr: u8, lcr: u8, mcr: u8, scr: u8, dll: u8, dlm: u8,
+    rx_armed: bool,
 }
 
 pub(crate) struct UartInput(Arc<Mutex<VecDeque<u8>>>);
@@ -43,7 +47,7 @@ impl UartInput {
 impl Uart {
     pub fn new(sink: Box<dyn Write + Send>) -> Self {
         Uart { sink, input: Arc::new(Mutex::new(VecDeque::new())),
-            ier: 0, fcr: 0, lcr: 0, mcr: 0, scr: 0, dll: 0, dlm: 0 }
+            ier: 0, fcr: 0, lcr: 0, mcr: 0, scr: 0, dll: 0, dlm: 0, rx_armed: false }
     }
 
     pub fn input_handle(&self) -> UartInput { UartInput(self.input.clone()) }
@@ -53,7 +57,8 @@ impl Uart {
     pub fn read(&mut self, reg: u8) -> u8 {
         match reg {
             REG_RBR_THR_DLL if self.dlab() => self.dll,
-            REG_RBR_THR_DLL => self.input.lock().unwrap().pop_front().unwrap_or(0),
+            REG_RBR_THR_DLL if self.rx_armed => self.input.lock().unwrap().pop_front().unwrap_or(0),
+            REG_RBR_THR_DLL => 0,
             REG_IER_DLM if self.dlab() => self.dlm,
             REG_IER_DLM => self.ier,
             REG_IIR_FCR => self.iir(),
@@ -70,7 +75,7 @@ impl Uart {
             REG_RBR_THR_DLL if self.dlab() => self.dll = v,
             REG_RBR_THR_DLL => { let _ = self.sink.write_all(&[v]); let _ = self.sink.flush(); }
             REG_IER_DLM if self.dlab() => self.dlm = v,
-            REG_IER_DLM => self.ier = v & 0x0F,
+            REG_IER_DLM => { self.ier = v & 0x0F; self.rx_armed |= self.ier & IER_RX != 0; }
             REG_IIR_FCR => self.fcr = v,
             REG_LCR => self.lcr = v,
             REG_MCR => self.mcr = v,
@@ -82,7 +87,8 @@ impl Uart {
     fn dlab(&self) -> bool { self.lcr & LCR_DLAB != 0 }
 
     fn lsr(&self) -> u8 {
-        LSR_READY_TX | if self.input.lock().unwrap().is_empty() { 0 } else { LSR_READY_RX }
+        let dr = self.rx_armed && !self.input.lock().unwrap().is_empty();
+        LSR_READY_TX | if dr { LSR_READY_RX } else { 0 }
     }
 
     fn iir(&self) -> u8 {
@@ -130,19 +136,24 @@ mod tests {
     }
 
     #[test]
-    fn lsr_reports_data_ready_when_input_pending() {
+    fn lsr_reports_data_ready_only_after_driver_arms_rx() {
         let (sink, _) = new_capture();
         let mut uart = Uart::new(sink);
         uart.input_handle().push(b'q');
-        assert_eq!(uart.read(5) & 0x01, 0x01);
+        assert_eq!(uart.read(5) & 0x01, 0, "DR must stay clear pre-arm");
+        uart.write(1, IER_RX);
+        assert_eq!(uart.read(5) & 0x01, 0x01, "DR set once armed and queue non-empty");
     }
 
     #[test]
-    fn rbr_pops_pushed_input() {
+    fn rbr_does_not_pop_until_driver_arms_rx() {
         let (sink, _) = new_capture();
         let mut uart = Uart::new(sink);
         uart.input_handle().push(b'a');
         uart.input_handle().push(b'b');
+        assert_eq!(uart.read(0), 0);
+        assert_eq!(uart.read(0), 0);
+        uart.write(1, IER_RX);
         assert_eq!(uart.read(0), b'a');
         assert_eq!(uart.read(0), b'b');
         assert_eq!(uart.read(0), 0);

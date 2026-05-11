@@ -163,17 +163,47 @@ pub(crate) trait MmioDevice: Send {
     /// Read `data.len()` bytes from `offset` within this device's MMIO region.
     fn read(&mut self, offset: u64, data: &mut [u8]) -> Result<(), GuestError>;
 
-    /// Write `data` at `offset` within this device's MMIO region.
-    fn write(&mut self, offset: u64, data: &[u8]) -> Result<(), GuestError>;
+    /// Write `data` at `offset` within this device's MMIO region. Receives
+    /// `&mut Memory` because virtio devices need to walk descriptor chains
+    /// in guest memory on notify writes.
+    fn write(&mut self, offset: u64, data: &[u8], mem: &mut Memory) -> Result<(), GuestError>;
 
     /// Pending interrupts, if any, for this device. Polled by lifecycle after each exit.
     fn pending_interrupt(&mut self) -> Option<Interrupt>;
+
+    /// Drain host-side asynchronous I/O (TAP fd reads, future AF_VSOCK
+    /// reads) into device queues. Called after every vCPU exit so that
+    /// frames arriving while the guest was halted get delivered on the
+    /// next wake. Default no-op; only async-backed devices override.
+    fn poll_io(&mut self, _mem: &mut Memory) -> Result<(), GuestError> { Ok(()) }
 }
 ```
 
 Devices return `GuestError` for any guest-induced fault (out-of-range offset, malformed virtio descriptor, integer overflow in length fields). They do not panic. They do not log-and-ignore.
 
 The `MmioBus` is an interval map keyed by `(base, size)` per device. Lookups are `O(log n)` over a small `n` (single-digit devices in the common case).
+
+### 3.4a virtio internals split across files
+
+A virtio device decomposes into three pieces because each piece is ≤100 prod lines and they have distinct responsibilities:
+
+- **`virtio_mmio.rs`** — the transport. Owns the device-class-agnostic register state (features, status, queue selector, interrupt status). Dispatches register reads and decodes which register a write touched, returning `Some(queue_idx)` to the device layer when a `QueueNotify` arrives.
+- **`virtio_queue.rs`** — split-virtqueue per-queue state. Holds the descriptor / available / used ring guest-physical addresses (assembled from the low+high u32 register pairs), the driver-set size, the ready flag, and a `last_avail_idx` cursor. Methods: `pop_avail` (drain head from avail ring with hostile-guest validation), `read_desc` (fetch one descriptor with bounds check), `push_used` (commit an entry to the used ring).
+- **`virtio_chain.rs`** — buffer transfer across a chain. `read_chain` walks the `NEXT`-linked list of read-only descriptors, concatenating into a host `Vec<u8>` (TX direction). `write_chain` scatters a host buffer back across writable descriptors (RX direction). Both cap iteration at queue size so a guest building a cyclic chain returns `GuestError::DescriptorChainCycle` rather than locking us up.
+
+Device files (`net.rs` today, `block.rs` / `vsock.rs` later) thread these together: own a `VirtioMmio`, dispatch `MmioDevice::read`/`write` to it, and on notify call the device-class-specific drain logic in a sibling I/O file (`net_io.rs`).
+
+### 3.4b Run-loop wakeup timer
+
+KVM_RUN doesn't return to userspace while the guest is `hlt`'d unless an external interrupt fires. With one vCPU and only legacy timer + virtio devices, an idle guest never produces an exit. That blocks `poll_io` from draining TAP — host-side packets queue up while the guest is asleep, including replies the guest is *waiting for*.
+
+The lifecycle layer installs a no-op SIGALRM handler and arms `setitimer(ITIMER_REAL, 5ms)` once at run-loop start. SIGALRM has `sa_flags = 0` (no SA_RESTART), so `KVM_RUN` returns `-EINTR` on signal delivery. `VcpuFd::run` maps that errno to `VcpuExit::Intr`, which the run loop treats as a no-op exit that still cycles `poll_io` + IRQ reconcile. The guest's own clocksource is unaffected (KVM_PIT lives in the host kernel; our timer is process-level).
+
+5ms is a tradeoff: shorter increases userspace wakeups for no benefit when the guest is busy; longer means the *worst-case* latency for an incoming TAP frame is one tick. For ICMP / TCP keepalive workloads, 5ms is well below any timeout that matters.
+
+### 3.4c IRQ reconcile
+
+`bus.pending_interrupts()` returns the set of GSIs each device is currently asserting. The run loop tracks the set last driven high and calls `KVM_IRQ_LINE` only on transitions — once on rise (0→1), once on fall (1→0). Without this, the run loop would re-assert IRQ 5 every iteration where virtio-net had a pending used-ring update, hammering the kernel handler before it could ACK.
 
 ### 3.5 Jailer ↔ VMM contract
 

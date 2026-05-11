@@ -280,9 +280,19 @@ impl Vm {
     /// byte at a time and pushing into the UART's input queue. The thread
     /// exits when stdin EOFs or errors. Detached because library callers
     /// using interactive=true accept the leak.
+    ///
+    /// When stdin is not a TTY (i.e. piped), pause for 2s before pushing.
+    /// Piped input would otherwise saturate the UART queue while the
+    /// kernel is still booting; when sh later opens `/dev/console`, the
+    /// n_tty ldisc resets its read buffer and discards bytes that were
+    /// already there. Real interactive typing is naturally paced and
+    /// doesn't trip this — so when stdin is a TTY we don't wait.
     fn maybe_spawn_stdin(input: UartInput, interactive: bool) {
         if !interactive { return; }
         std::thread::spawn(move || {
+            if unsafe { libc::isatty(0) } == 0 {
+                std::thread::sleep(std::time::Duration::from_millis(2000));
+            }
             let stdin = io::stdin();
             let mut handle = stdin.lock();
             let mut buf = [0u8; 1];
