@@ -15,7 +15,7 @@ pub(crate) use uart::{Uart, UartInput, COM1_BASE, COM1_GSI, COM1_LAST};
 
 pub(crate) trait MmioDevice: Send {
     fn read(&mut self, offset: u64, data: &mut [u8]) -> Result<(), GuestError>;
-    fn write(&mut self, offset: u64, data: &[u8]) -> Result<(), GuestError>;
+    fn write(&mut self, offset: u64, data: &[u8], mem: &mut crate::memory::Memory) -> Result<(), GuestError>;
     fn pending_interrupt(&mut self) -> Option<Interrupt>;
 }
 

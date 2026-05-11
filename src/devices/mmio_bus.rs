@@ -36,10 +36,10 @@ impl MmioBus {
         region.device.read(offset, data)
     }
 
-    pub fn write(&mut self, addr: u64, data: &[u8]) -> Result<(), GuestError> {
+    pub fn write(&mut self, addr: u64, data: &[u8], mem: &mut crate::memory::Memory) -> Result<(), GuestError> {
         let region = self.find(addr, data.len())?;
         let offset = addr - region.base;
-        region.device.write(offset, data)
+        region.device.write(offset, data, mem)
     }
 
     pub fn pending_interrupts(&mut self) -> Vec<(u64, Interrupt)> {
@@ -92,7 +92,7 @@ mod tests {
             for b in data.iter_mut() { *b = 0xAB; }
             Ok(())
         }
-        fn write(&mut self, offset: u64, _data: &[u8]) -> Result<(), GuestError> {
+        fn write(&mut self, offset: u64, _data: &[u8], _mem: &mut crate::memory::Memory) -> Result<(), GuestError> {
             self.writes.fetch_add(1, Ordering::SeqCst);
             self.last_offset.store(offset as u32, Ordering::SeqCst);
             Ok(())
@@ -100,12 +100,17 @@ mod tests {
         fn pending_interrupt(&mut self) -> Option<Interrupt> { None }
     }
 
+    fn mem() -> crate::memory::Memory {
+        crate::memory::Memory::new(0x10_0000).expect("mem")
+    }
+
     #[test]
     fn dispatches_to_registered_device() {
         let mut bus = MmioBus::new();
+        let mut m = mem();
         let (dev, reads, writes, last) = Counter::new();
         bus.register(0xD000_0000, 0x1000, Box::new(dev)).unwrap();
-        bus.write(0xD000_0003, &[0x42]).unwrap();
+        bus.write(0xD000_0003, &[0x42], &mut m).unwrap();
         let mut buf = [0u8; 1];
         bus.read(0xD000_0005, &mut buf).unwrap();
         assert_eq!(writes.load(Ordering::SeqCst), 1);
@@ -126,9 +131,10 @@ mod tests {
     #[test]
     fn rejects_address_outside_any_region() {
         let mut bus = MmioBus::new();
+        let mut m = mem();
         let (dev, _, _, _) = Counter::new();
         bus.register(0xD000_0000, 0x1000, Box::new(dev)).unwrap();
-        assert!(bus.write(0xD000_2000, &[0x01]).is_err());
+        assert!(bus.write(0xD000_2000, &[0x01], &mut m).is_err());
     }
 
     #[test]

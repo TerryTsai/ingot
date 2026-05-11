@@ -142,7 +142,7 @@ impl Vm {
                 VcpuExit::Hlt => return Ok(ExitStatus::Halted),
                 VcpuExit::Shutdown => return Ok(ExitStatus::GuestFault(GuestFaultReason::TripleFault)),
                 VcpuExit::MmioRead { addr, len } => self.handle_mmio_read(addr, len)?,
-                VcpuExit::MmioWrite { addr, data, len } => self.bus.write(addr, &data[..len])?,
+                VcpuExit::MmioWrite { addr, data, len } => self.bus.write(addr, &data[..len], &mut self.mem)?,
                 VcpuExit::IoIn { port, len } => self.handle_pio_in(port, len),
                 VcpuExit::IoOut { port, data, len } => self.handle_pio_out(port, &data[..len]),
                 VcpuExit::Other(r) => return Err(IngotError::Kvm(KvmError::UnhandledExit(r))),
@@ -151,6 +151,10 @@ impl Vm {
             if now != uart_irq {
                 self.vm_fd.set_irq_line(COM1_GSI, now as u32)?;
                 uart_irq = now;
+            }
+            for (_, intr) in self.bus.pending_interrupts() {
+                self.vm_fd.set_irq_line(intr.gsi, 0)?;
+                self.vm_fd.set_irq_line(intr.gsi, 1)?;
             }
         }
     }

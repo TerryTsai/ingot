@@ -21,7 +21,7 @@ impl MmioDevice for Block {
         unimplemented!()
     }
 
-    fn write(&mut self, offset: u64, data: &[u8]) -> Result<(), GuestError> {
+    fn write(&mut self, offset: u64, data: &[u8], mem: &mut Memory) -> Result<(), GuestError> {
         unimplemented!()
     }
 
