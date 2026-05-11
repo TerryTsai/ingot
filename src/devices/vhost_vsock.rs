@@ -7,7 +7,7 @@
 use std::ffi::c_ulong;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 
-use crate::error::HostError;
+use crate::lifecycle::error::HostError;
 
 const VHOST_VIRTIO: u32 = 0xAF;
 

@@ -7,7 +7,7 @@
 use super::tap::Tap;
 use super::virtio_mmio::{VirtioMmio, CONFIG_BASE, INT_USED_RING, VENDOR_ID, VIRTIO_F_VERSION_1};
 use super::{GuestError, Interrupt, MmioDevice};
-use crate::memory::Memory;
+use crate::lifecycle::memory::Memory;
 
 const DEVICE_ID_NET: u32 = 1;
 const VIRTIO_NET_F_MAC: u64 = 1 << 5;

@@ -1,4 +1,8 @@
 //! Ingot — minimal KVM-based VMM. See SPEC.md and docs/architecture.md.
+//!
+//! The five subsystems from SPEC §3.1 each live in a folder of the
+//! same name. `lifecycle` is the orchestrator and the public-API
+//! owner; everything else is composed by it.
 
 // Crate-wide `dead_code` allow: Phase 5 (`Vsock`, `VsockSpec`) is sketched
 // in placeholder form, and several KVM helpers (`get_regs`, `get_sregs`,
@@ -9,23 +13,16 @@
 // variable warnings still fire.
 #![allow(dead_code)]
 
-mod config;
-mod error;
-mod memory;
-mod outcome;
-mod seccomp;
-mod state;
-
 mod boot;
 mod devices;
+mod jailer;
 mod kvm;
-mod vm;
+mod lifecycle;
 
-pub use config::{BlockSpec, Config, NetSpec, StdoutSink, VsockSpec};
 pub use devices::GuestError;
-pub use error::{HostError, IngotError};
 pub use kvm::KvmError;
-pub use outcome::{ExitStatus, GuestFaultReason, Outcome, Telemetry, TransitionEvent};
-pub use seccomp::{install as install_seccomp, Mode as SeccompMode};
-pub use state::State;
-pub use vm::Vm;
+pub use lifecycle::{
+    BlockSpec, Config, ExitStatus, GuestFaultReason, HostError, IngotError, NetSpec, Outcome,
+    State, StdoutSink, Telemetry, TransitionEvent, Vm, VsockSpec,
+};
+pub use jailer::{install as install_seccomp, Mode as SeccompMode};

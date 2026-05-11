@@ -5,8 +5,8 @@
 //! 64-bit submode. Placed at 0x500; the kernel installs its own GDT
 //! early in startup_64.
 
-use crate::error::HostError;
-use crate::memory::Memory;
+use crate::lifecycle::error::HostError;
+use crate::lifecycle::memory::Memory;
 
 pub const GDT_ADDR: u64 = 0x500;
 pub const GDT_LIMIT: u16 = 23;

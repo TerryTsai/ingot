@@ -16,13 +16,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crate::boot::{self, ElfLoader, Initramfs, Kernel, MpTable, VcpuPrimer};
-use crate::config::{Config, StdoutSink};
+use crate::lifecycle::config::{Config, StdoutSink};
 use crate::devices::{Block, MmioBus, Net, Tap, Uart, UartInput, Vsock, COM1_BASE, COM1_GSI, COM1_LAST};
-use crate::error::{HostError, IngotError};
+use crate::lifecycle::error::{HostError, IngotError};
 use crate::kvm::{Cpuid, KvmError, KvmFd, VcpuExit, VcpuFd, VmFd};
-use crate::memory::Memory;
-use crate::outcome::{ExitStatus, GuestFaultReason, Outcome, Telemetry, TransitionEvent};
-use crate::state::{transition, State};
+use crate::lifecycle::memory::Memory;
+use crate::lifecycle::outcome::{ExitStatus, GuestFaultReason, Outcome, Telemetry, TransitionEvent};
+use crate::lifecycle::state::{transition, State};
 
 const CMDLINE_ADDR: u64 = 0x2_0000;
 const CMDLINE_MAX: usize = 2048;
@@ -434,8 +434,8 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::{Config, IngotError, Outcome, StdoutSink, Vm};
-    use crate::outcome::ExitStatus;
-    use crate::state::State;
+    use crate::lifecycle::outcome::ExitStatus;
+    use crate::lifecycle::state::State;
 
     const ENTRY_POINT: u64 = 0x10_0000;
 

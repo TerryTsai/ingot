@@ -10,8 +10,8 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use super::vhost_vsock::{VhostVsock, VringConfig};
 use super::virtio_mmio::{VirtioMmio, CONFIG_BASE, INT_USED_RING, VENDOR_ID, VIRTIO_F_VERSION_1};
 use super::{GuestError, Interrupt, MmioDevice};
-use crate::error::HostError;
-use crate::memory::Memory;
+use crate::lifecycle::error::HostError;
+use crate::lifecycle::memory::Memory;
 
 const DEVICE_ID_VSOCK: u32 = 19;
 const VIRTIO_VSOCK_GSI: u32 = 7;

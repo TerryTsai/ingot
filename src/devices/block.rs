@@ -14,8 +14,8 @@ use std::path::Path;
 use super::virtio_mmio::{VirtioMmio, CONFIG_BASE, INT_USED_RING, VENDOR_ID, VIRTIO_F_VERSION_1};
 use super::virtio_queue::{Desc, DESC_F_NEXT, DESC_F_WRITE};
 use super::{GuestError, Interrupt, MmioDevice};
-use crate::error::HostError;
-use crate::memory::Memory;
+use crate::lifecycle::error::HostError;
+use crate::lifecycle::memory::Memory;
 
 const DEVICE_ID_BLOCK: u32 = 2;
 const VIRTIO_BLK_F_RO: u64 = 1 << 5;

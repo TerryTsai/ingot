@@ -3,8 +3,8 @@
 //! segment to its `p_paddr`. BSS is left zero — anonymous mmap is
 //! zero-initialized.
 
-use crate::error::HostError;
-use crate::memory::Memory;
+use crate::lifecycle::error::HostError;
+use crate::lifecycle::memory::Memory;
 
 use super::Kernel;
 

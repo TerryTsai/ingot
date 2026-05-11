@@ -6,7 +6,7 @@
 //! returns `DescriptorChainCycle` instead of looping forever.
 
 use super::GuestError;
-use crate::memory::Memory;
+use crate::lifecycle::memory::Memory;
 
 const QUEUE_NUM_MAX: u32 = 256;
 const DESC_SIZE: u64 = 16;

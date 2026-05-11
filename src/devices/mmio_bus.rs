@@ -1,7 +1,7 @@
 //! MMIO bus: maps `(base, size)` regions to `MmioDevice` handles and
 //! dispatches reads/writes from the orchestrator's run loop.
 
-use crate::error::HostError;
+use crate::lifecycle::error::HostError;
 
 use super::{GuestError, Interrupt, MmioDevice};
 
@@ -36,7 +36,7 @@ impl MmioBus {
         region.device.read(offset, data)
     }
 
-    pub fn write(&mut self, addr: u64, data: &[u8], mem: &mut crate::memory::Memory) -> Result<(), GuestError> {
+    pub fn write(&mut self, addr: u64, data: &[u8], mem: &mut crate::lifecycle::memory::Memory) -> Result<(), GuestError> {
         let region = self.find(addr, data.len())?;
         let offset = addr - region.base;
         region.device.write(offset, data, mem)
@@ -52,7 +52,7 @@ impl MmioBus {
         out
     }
 
-    pub fn poll_io(&mut self, mem: &mut crate::memory::Memory) -> Result<(), GuestError> {
+    pub fn poll_io(&mut self, mem: &mut crate::lifecycle::memory::Memory) -> Result<(), GuestError> {
         for r in &mut self.regions {
             r.device.poll_io(mem)?;
         }
@@ -99,7 +99,7 @@ mod tests {
             for b in data.iter_mut() { *b = 0xAB; }
             Ok(())
         }
-        fn write(&mut self, offset: u64, _data: &[u8], _mem: &mut crate::memory::Memory) -> Result<(), GuestError> {
+        fn write(&mut self, offset: u64, _data: &[u8], _mem: &mut crate::lifecycle::memory::Memory) -> Result<(), GuestError> {
             self.writes.fetch_add(1, Ordering::SeqCst);
             self.last_offset.store(offset as u32, Ordering::SeqCst);
             Ok(())
@@ -107,8 +107,8 @@ mod tests {
         fn pending_interrupt(&mut self) -> Option<Interrupt> { None }
     }
 
-    fn mem() -> crate::memory::Memory {
-        crate::memory::Memory::new(0x10_0000).expect("mem")
+    fn mem() -> crate::lifecycle::memory::Memory {
+        crate::lifecycle::memory::Memory::new(0x10_0000).expect("mem")
     }
 
     #[test]

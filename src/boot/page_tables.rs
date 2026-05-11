@@ -5,8 +5,8 @@
 //!   PML4 at 0x9000  (single entry → PDPT)
 //!   PDPT at 0xA000  (four 1 GiB entries: 0, 1, 2, 3 GiB)
 
-use crate::error::HostError;
-use crate::memory::Memory;
+use crate::lifecycle::error::HostError;
+use crate::lifecycle::memory::Memory;
 
 pub const PML4_ADDR: u64 = 0x9000;
 pub const PDPT_ADDR: u64 = 0xA000;

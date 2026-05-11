@@ -4,7 +4,7 @@
 use std::io;
 
 use crate::devices::GuestError;
-use crate::error::HostError;
+use crate::lifecycle::error::HostError;
 
 pub(crate) struct Memory {
     ptr: *mut u8,

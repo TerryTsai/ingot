@@ -6,9 +6,9 @@
 
 use kvm_bindings::{kvm_regs, kvm_segment, kvm_sregs};
 
-use crate::error::HostError;
+use crate::lifecycle::error::HostError;
 use crate::kvm::RegState;
-use crate::memory::Memory;
+use crate::lifecycle::memory::Memory;
 
 use super::gdt::{Gdt, CODE_SELECTOR, DATA_SELECTOR, GDT_ADDR, GDT_LIMIT};
 use super::page_tables::{PageTables, PML4_ADDR};

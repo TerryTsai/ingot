@@ -7,7 +7,7 @@
 use std::ffi::{c_int, c_short};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 
-use crate::error::HostError;
+use crate::lifecycle::error::HostError;
 
 const TUNSETIFF: u64 = 0x4004_54ca;
 const IFF_TAP: c_short = 0x0002;

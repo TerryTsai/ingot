@@ -26,7 +26,7 @@ pub fn build_boot_params(
     cmdline_addr: u64,
     cmdline_max: usize,
     mem_size: u64,
-) -> Result<BootParams, crate::error::HostError> {
+) -> Result<BootParams, crate::lifecycle::error::HostError> {
     let mut bp = BootParams::new();
     bp.set_cmdline(cmdline_addr, cmdline_max as u32);
     if let Some(img) = initramfs {

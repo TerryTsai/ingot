@@ -3,8 +3,8 @@
 //! [0, 0x400), [0x9fc00, 0xa0000), [0xf0000, 0x100000) for the "_MP_"
 //! signature — discover LAPIC and IOAPIC without needing ACPI/MADT.
 
-use crate::error::HostError;
-use crate::memory::Memory;
+use crate::lifecycle::error::HostError;
+use crate::lifecycle::memory::Memory;
 
 const EBDA: u64 = 0x9fc00;
 const CONFIG_TABLE_ADDR: u32 = EBDA as u32 + 16;

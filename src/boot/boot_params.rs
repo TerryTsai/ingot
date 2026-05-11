@@ -2,8 +2,8 @@
 //! many nested sub-structs; we operate on a byte buffer at known
 //! offsets and only set the fields the 64-bit boot protocol reads.
 
-use crate::error::HostError;
-use crate::memory::Memory;
+use crate::lifecycle::error::HostError;
+use crate::lifecycle::memory::Memory;
 
 const SIZE: usize = 4096;
 
