@@ -19,8 +19,20 @@ impl VmFd {
         VmFd { fd, vcpu_mmap_size }
     }
 
+    /// Sets the physical base address of KVM's 3-page TSS region. Required on
+    /// Intel hosts before `create_irqchip`. The region must not overlap any
+    /// registered userspace memory region.
+    pub fn set_tss_addr(&self, addr: u32) -> Result<(), KvmError> {
+        check(
+            unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_SET_TSS_ADDR, addr as libc::c_ulong) },
+            "KVM_SET_TSS_ADDR",
+        )?;
+        Ok(())
+    }
+
     /// Enables KVM's in-kernel emulation of PIC, IOAPIC, and per-vCPU LAPIC.
-    /// Must be called before any vCPU is created.
+    /// Must be called before any vCPU is created and (on Intel) after
+    /// `set_tss_addr`.
     pub fn create_irqchip(&self) -> Result<(), KvmError> {
         check(
             unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_CREATE_IRQCHIP, 0) },

@@ -29,6 +29,9 @@ pub(crate) const UART_SIZE: u64 = 0x1000;
 const CMDLINE_ADDR: u64 = 0x2_0000;
 const BOOT_PARAMS_ADDR: u64 = 0x7000;
 const CMDLINE_MAX: u32 = 2048;
+/// KVM's 3-page TSS region, placed in the high I/O hole below 4 GiB so it
+/// doesn't conflict with the userspace memory region or the MMIO bus.
+const TSS_ADDR: u32 = 0xfffb_d000;
 const MIN_MEMORY: u64 = 16 * 1024 * 1024;
 const PAGE_SIZE: u64 = 0x1000;
 const CMDLINE_LIMIT: usize = 2048;
@@ -54,10 +57,8 @@ impl Vm {
         let vm_fd = kvm.create_vm()?;
         let mem = Memory::new(config.memory_bytes)?;
         vm_fd.set_user_memory_region(0, 0, mem.host_ptr(), config.memory_bytes)?;
-        // IRQCHIP intentionally not yet enabled: in-kernel LAPIC without
-        // proper init (KVM_SET_TSS_ADDR, KVM_SET_LAPIC) makes Hlt with IF=0
-        // hang in KVM rather than exiting. Real-kernel boot will need this
-        // re-enabled with the precursors; tracked for the next pass.
+        vm_fd.set_tss_addr(TSS_ADDR)?;
+        vm_fd.create_irqchip()?;
         let vcpus = Self::make_vcpus(&vm_fd, config.vcpus)?;
         let (bus, captured_stdout) = Self::make_bus(&config)?;
         Ok(Vm {
@@ -361,33 +362,40 @@ mod tests {
         assert!(Vm::new(cfg).is_err());
     }
 
+    // Synth tests use `ud2` (0F 0B) to terminate. With in-kernel LAPIC enabled,
+    // hlt blocks indefinitely in KVM_RUN waiting for an interrupt; ud2 raises
+    // #UD which, without an IDT, cascades to triple fault → KVM_EXIT_SHUTDOWN.
+    const UD2: [u8; 2] = [0x0f, 0x0b];
+
     #[test]
-    fn synthetic_hlt_kernel_reaches_halted() {
-        match run_with_payload("hlt", &[0xf4]) {
-            Ok(outcome) => assert!(matches!(outcome.exit_status, ExitStatus::Halted)),
-            Err(e) => eprintln!("[synthetic_hlt_kernel_reaches_halted] skipped: {:?}", e),
+    fn synthetic_kernel_reaches_terminal_exit() {
+        match run_with_payload("ud2", &UD2) {
+            Ok(o) => assert!(matches!(o.exit_status, ExitStatus::GuestFault(crate::GuestFaultReason::TripleFault))),
+            Err(e) => eprintln!("[synthetic_kernel_reaches_terminal_exit] skipped: {:?}", e),
         }
     }
 
     #[test]
-    fn synthetic_pio_in_consumed_then_halted() {
-        match run_with_payload("pio_in", &[0xec, 0xf4]) {
-            Ok(outcome) => assert!(matches!(outcome.exit_status, ExitStatus::Halted)),
-            Err(e) => eprintln!("[synthetic_pio_in_consumed_then_halted] skipped: {:?}", e),
+    fn synthetic_pio_in_consumed() {
+        // in al, dx ; ud2
+        match run_with_payload("pio_in", &[0xec, 0x0f, 0x0b]) {
+            Ok(o) => assert!(matches!(o.exit_status, ExitStatus::GuestFault(crate::GuestFaultReason::TripleFault))),
+            Err(e) => eprintln!("[synthetic_pio_in_consumed] skipped: {:?}", e),
         }
     }
 
     #[test]
-    fn synthetic_pio_out_consumed_then_halted() {
-        match run_with_payload("pio_out", &[0xee, 0xf4]) {
-            Ok(outcome) => assert!(matches!(outcome.exit_status, ExitStatus::Halted)),
-            Err(e) => eprintln!("[synthetic_pio_out_consumed_then_halted] skipped: {:?}", e),
+    fn synthetic_pio_out_consumed() {
+        // out dx, al ; ud2
+        match run_with_payload("pio_out", &[0xee, 0x0f, 0x0b]) {
+            Ok(o) => assert!(matches!(o.exit_status, ExitStatus::GuestFault(crate::GuestFaultReason::TripleFault))),
+            Err(e) => eprintln!("[synthetic_pio_out_consumed] skipped: {:?}", e),
         }
     }
 
     #[test]
     fn telemetry_records_full_state_transition_sequence() {
-        match run_with_payload("transitions", &[0xf4]) {
+        match run_with_payload("transitions", &UD2) {
             Ok(outcome) => {
                 let actual: Vec<_> = outcome.telemetry.transitions.iter().map(|t| (t.from, t.to)).collect();
                 assert_eq!(actual, vec![
@@ -406,16 +414,13 @@ mod tests {
 
     #[test]
     fn synthetic_kernel_writes_hi_to_mmio_uart() {
-        // mov rax, 0xD0000000 ; mov byte [rax], 'H' ; mov byte [rax], 'i' ; hlt
+        // mov rax, 0xD0000000 ; mov byte [rax], 'H' ; mov byte [rax], 'i' ; ud2
         let payload = [
             0x48, 0xb8, 0x00, 0x00, 0x00, 0xd0, 0x00, 0x00, 0x00, 0x00,
-            0xc6, 0x00, b'H', 0xc6, 0x00, b'i', 0xf4,
+            0xc6, 0x00, b'H', 0xc6, 0x00, b'i', 0x0f, 0x0b,
         ];
         match run_with_stdout("uart_write", &payload, StdoutSink::Buffer) {
-            Ok(outcome) => {
-                assert!(matches!(outcome.exit_status, ExitStatus::Halted));
-                assert_eq!(outcome.stdout, b"Hi".to_vec());
-            }
+            Ok(outcome) => assert_eq!(outcome.stdout, b"Hi".to_vec()),
             Err(e) => eprintln!("[synthetic_kernel_writes_hi_to_mmio_uart] skipped: {:?}", e),
         }
     }

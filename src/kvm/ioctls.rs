@@ -29,6 +29,7 @@ pub const KVM_GET_API_VERSION: c_ulong = ioc(DIR_NONE, KVMIO, 0x00, 0);
 pub const KVM_CREATE_VM: c_ulong = ioc(DIR_NONE, KVMIO, 0x01, 0);
 pub const KVM_GET_VCPU_MMAP_SIZE: c_ulong = ioc(DIR_NONE, KVMIO, 0x04, 0);
 pub const KVM_CREATE_VCPU: c_ulong = ioc(DIR_NONE, KVMIO, 0x41, 0);
+pub const KVM_SET_TSS_ADDR: c_ulong = ioc(DIR_NONE, KVMIO, 0x47, 0);
 pub const KVM_CREATE_IRQCHIP: c_ulong = ioc(DIR_NONE, KVMIO, 0x60, 0);
 pub const KVM_RUN: c_ulong = ioc(DIR_NONE, KVMIO, 0x80, 0);
 
