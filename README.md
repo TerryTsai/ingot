@@ -10,16 +10,17 @@ The build target is a microVM small enough to fit on one screen of `ls`. Today: 
 
 ## What works today
 
-Phases 2, 3, and 4 of the build plan in [SPEC.md §4](SPEC.md) are shipped. Three reproducible test scripts in `scripts/` each print eight PASS/FAIL indicators.
+Phases 2 through 5 of the build plan in [SPEC.md §4](SPEC.md) are shipped. Five reproducible test scripts in `scripts/` each print eight PASS/FAIL indicators.
 
 | Phase | What | Test |
 |---|---|---|
 | 2 | Boots a real Linux kernel to an interactive shell over serial. | manual |
-| 3 | virtio-block: file-backed `/dev/vda`, ext4 mount + read + write + writeback persistence. | `scripts/block-test.sh` |
+| 3 | virtio-block: file-backed `/dev/vda`, ext4 mount + read + write + persistence. Strict done: boot from disk, no initramfs. | `scripts/block-test.sh`, `scripts/disk-boot.sh` |
 | 4 | virtio-net: TAP-backed `eth0` with full TCP/IP, ping to host works. | `scripts/net-test.sh` |
+| 5 | virtio-vsock: AF_VSOCK ↔ AF_VSOCK round-trip between host and guest, vhost-vsock passthrough. | `scripts/vsock-test.sh` |
 | — | End-to-end compute demo: static Rust binary as PID 1, serves prime-sieve compute to the host over TCP. | `scripts/compute-demo.sh` |
 
-77 unit tests pass on real KVM.
+77 unit tests + 1 doctest pass on real KVM.
 
 ## Quick start
 
@@ -28,9 +29,11 @@ Prerequisites: Linux x86_64 host with `/dev/kvm`, user in the `kvm` group, Rust 
 Build a custom microvm-tuned kernel (see [docs/phase2-real-kernel.md](docs/phase2-real-kernel.md) for the config fragment) and a busybox-static. Then any of:
 
 ```sh
-cargo test --quiet            # 77 unit tests on real KVM
+cargo test --quiet            # 77 unit + 1 doctest on real KVM
 ./scripts/net-test.sh         # virtio-net round-trip
 ./scripts/block-test.sh       # virtio-block read/write
+./scripts/vsock-test.sh       # AF_VSOCK echo round-trip
+./scripts/disk-boot.sh        # boot from disk (no initramfs)
 ./scripts/compute-demo.sh     # static Rust /init serves compute over TCP
 ```
 
@@ -60,7 +63,7 @@ cargo run --bin ingot -- run \
 
 ## Status
 
-Phases 5–10 are not yet started. Phase 5 (virtio-vsock) is the next sequenced item and is the channel a host harness will use to feed code/inputs into a running guest.
+Phases 6–10 are not yet started. Phase 6 (library API / lifecycle polish) is largely a side-effect of Phases 2–5 — the real next chunks are Phase 7 (jailer: seccomp + namespaces + cgroups, separate binary) and the Phase 9 differentiator spikes.
 
 ## License
 
