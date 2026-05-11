@@ -32,7 +32,11 @@ pub struct NetSpec {
 }
 
 pub struct VsockSpec {
-    pub host_listener_fd: RawFd,
+    /// Guest's vsock Context ID. The host's CID is fixed at 2
+    /// (`VMADDR_CID_HOST`); pick anything >= 3 for the guest, unique
+    /// across concurrent VMs on this host. With vhost-vsock backing,
+    /// any host process can `socket(AF_VSOCK)` + `connect((cid, port))`
+    /// to reach the guest — no fd needs to flow through ingot.
     pub guest_cid: u32,
 }
 

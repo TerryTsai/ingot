@@ -17,7 +17,7 @@ use std::time::Instant;
 
 use crate::boot::{self, ElfLoader, Initramfs, Kernel, MpTable, VcpuPrimer};
 use crate::config::{Config, StdoutSink};
-use crate::devices::{Block, MmioBus, Net, Tap, Uart, UartInput, COM1_BASE, COM1_GSI, COM1_LAST};
+use crate::devices::{Block, MmioBus, Net, Tap, Uart, UartInput, Vsock, COM1_BASE, COM1_GSI, COM1_LAST};
 use crate::error::{HostError, IngotError};
 use crate::kvm::{Cpuid, KvmError, KvmFd, VcpuExit, VcpuFd, VmFd};
 use crate::memory::Memory;
@@ -48,6 +48,8 @@ const VIRTIO_NET_GSI: u32 = 5;
 const VIRTIO_NET_MAC: [u8; 6] = [0x52, 0x54, 0x00, 0xC0, 0xFF, 0xEE];
 const VIRTIO_BLK_BASE: u64 = 0xD000_1000;
 const VIRTIO_BLK_SIZE: u64 = 0x1000;
+const VIRTIO_VSOCK_BASE: u64 = 0xD000_2000;
+const VIRTIO_VSOCK_SIZE: u64 = 0x1000;
 
 type Captured = Option<Arc<Mutex<Vec<u8>>>>;
 
@@ -109,6 +111,10 @@ impl Vm {
         if let Some(spec) = &config.rootfs {
             let blk = Block::new(&spec.path, spec.readonly)?;
             bus.register(VIRTIO_BLK_BASE, VIRTIO_BLK_SIZE, Box::new(blk))?;
+        }
+        if let Some(spec) = &config.vsock {
+            let v = Vsock::new(spec.guest_cid as u64, config.memory_bytes, mem.host_ptr() as u64)?;
+            bus.register(VIRTIO_VSOCK_BASE, VIRTIO_VSOCK_SIZE, Box::new(v))?;
         }
         Ok(Vm {
             telemetry: Self::fresh_telemetry(),

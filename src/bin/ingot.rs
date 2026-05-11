@@ -1,11 +1,11 @@
 //! Ingot CLI:
 //!   ingot run --kernel PATH [--initramfs PATH] [--rootfs PATH[:ro]]
-//!             [--memory MiB] [--cmdline STR] [--tap NAME]
+//!             [--memory MiB] [--cmdline STR] [--tap NAME] [--vsock-cid N]
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use ingot::{BlockSpec, Config, StdoutSink, Vm};
+use ingot::{BlockSpec, Config, StdoutSink, Vm, VsockSpec};
 
 fn parse_rootfs(value: &str) -> BlockSpec {
     let (path, readonly) = match value.strip_suffix(":ro") {
@@ -62,6 +62,7 @@ fn apply_arg(args: &[String], i: usize, c: &mut Config) -> Result<usize, u8> {
         "--memory" => c.memory_bytes = value.parse::<u64>().unwrap_or(128) * 1024 * 1024,
         "--cmdline" => c.cmdline = value.clone(),
         "--tap" => c.tap_name = Some(value.clone()),
+        "--vsock-cid" => c.vsock = Some(VsockSpec { guest_cid: value.parse().unwrap_or(0) }),
         other => {
             eprintln!("ingot: unknown option {}", other);
             return Err(2);

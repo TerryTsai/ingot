@@ -37,6 +37,8 @@ pub enum HostError {
     MmapFailed(i32),
     TapCreateFailed(i32),
     TapOpenFailed(i32),
+    VhostVsockOpenFailed(i32),
+    VhostVsockIoctl(i32),
     SeccompInstallFailed(i32),
     CgroupSetupFailed(i32),
 }

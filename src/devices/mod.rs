@@ -8,16 +8,19 @@ mod net;
 mod net_io;
 mod tap;
 mod uart;
+mod vhost_vsock;
 mod virtio_chain;
 mod virtio_mmio;
 mod virtio_queue;
 mod vsock;
+mod vsock_io;
 
 pub(crate) use block::Block;
 pub(crate) use mmio_bus::MmioBus;
 pub(crate) use net::Net;
 pub(crate) use tap::Tap;
 pub(crate) use uart::{Uart, UartInput, COM1_BASE, COM1_GSI, COM1_LAST};
+pub(crate) use vsock::Vsock;
 
 pub(crate) trait MmioDevice: Send {
     fn read(&mut self, offset: u64, data: &mut [u8]) -> Result<(), GuestError>;
