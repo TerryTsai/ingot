@@ -138,6 +138,8 @@ impl Vm {
 
     fn run_loop(&mut self) -> Result<ExitStatus, IngotError> {
         let mut uart_irq = false;
+        let mut bus_gsis: Vec<u32> = Vec::new();
+        install_wakeup_timer();
         loop {
             match self.vcpus[0].run()? {
                 VcpuExit::Hlt => return Ok(ExitStatus::Halted),
@@ -146,6 +148,7 @@ impl Vm {
                 VcpuExit::MmioWrite { addr, data, len } => self.bus.write(addr, &data[..len], &mut self.mem)?,
                 VcpuExit::IoIn { port, len } => self.handle_pio_in(port, len),
                 VcpuExit::IoOut { port, data, len } => self.handle_pio_out(port, &data[..len]),
+                VcpuExit::Intr => {}
                 VcpuExit::Other(r) => return Err(IngotError::Kvm(KvmError::UnhandledExit(r))),
             }
             let now = self.uart.pending_irq();
@@ -154,11 +157,24 @@ impl Vm {
                 uart_irq = now;
             }
             self.bus.poll_io(&mut self.mem)?;
-            for (_, intr) in self.bus.pending_interrupts() {
-                self.vm_fd.set_irq_line(intr.gsi, 0)?;
-                self.vm_fd.set_irq_line(intr.gsi, 1)?;
-            }
+            self.reconcile_bus_irqs(&mut bus_gsis)?;
         }
+    }
+
+    /// Compare the bus's currently-pending GSIs against the set last
+    /// driven high and drive each transition exactly once. Edge-triggered
+    /// IOAPIC IRQs would otherwise refire every loop iteration; level-
+    /// triggered ones would be re-asserted needlessly.
+    fn reconcile_bus_irqs(&mut self, asserted: &mut Vec<u32>) -> Result<(), IngotError> {
+        let pending: Vec<u32> = self.bus.pending_interrupts().into_iter().map(|(_, i)| i.gsi).collect();
+        for gsi in asserted.iter() {
+            if !pending.contains(gsi) { self.vm_fd.set_irq_line(*gsi, 0)?; }
+        }
+        for gsi in &pending {
+            if !asserted.contains(gsi) { self.vm_fd.set_irq_line(*gsi, 1)?; }
+        }
+        *asserted = pending;
+        Ok(())
     }
 
     fn handle_mmio_read(&mut self, addr: u64, len: usize) -> Result<(), IngotError> {
@@ -287,6 +303,29 @@ impl Vm {
             transitions: Vec::new(),
             peak_rss_kb: None,
         }
+    }
+}
+
+extern "C" fn sigalrm_noop(_: libc::c_int) {}
+
+/// Install a no-op SIGALRM handler and arm setitimer at 5ms intervals.
+/// SIGALRM with no SA_RESTART forces `KVM_RUN` to return `-EINTR`, which
+/// `VcpuFd::run` turns into `VcpuExit::Intr`. The run loop then drives
+/// `poll_io` (TAP RX, etc.) before re-entering `KVM_RUN`. Without this,
+/// a guest in `hlt` would never let the host drain its TAP fd because
+/// nothing else generates a vCPU exit.
+fn install_wakeup_timer() {
+    unsafe {
+        let mut sa: libc::sigaction = std::mem::zeroed();
+        sa.sa_sigaction = sigalrm_noop as *const () as libc::sighandler_t;
+        sa.sa_flags = 0;
+        libc::sigemptyset(&mut sa.sa_mask);
+        libc::sigaction(libc::SIGALRM, &sa, std::ptr::null_mut());
+        let it = libc::itimerval {
+            it_interval: libc::timeval { tv_sec: 0, tv_usec: 5_000 },
+            it_value:    libc::timeval { tv_sec: 0, tv_usec: 5_000 },
+        };
+        libc::setitimer(libc::ITIMER_REAL, &it, std::ptr::null_mut());
     }
 }
 

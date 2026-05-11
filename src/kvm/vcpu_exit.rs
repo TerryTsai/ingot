@@ -12,6 +12,10 @@ pub enum VcpuExit {
     MmioWrite { addr: u64, data: [u8; 8], len: usize },
     IoIn { port: u16, len: usize },
     IoOut { port: u16, data: [u8; 4], len: usize },
+    /// KVM_RUN was interrupted by a signal (we use SIGALRM to wake from
+    /// hlt periodically so we can poll host fds like TAP). Run-loop
+    /// treats this as a no-op exit.
+    Intr,
     Other(u32),
 }
 

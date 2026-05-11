@@ -75,7 +75,12 @@ impl VcpuFd {
     }
 
     pub fn run(&mut self) -> Result<VcpuExit, KvmError> {
-        check(unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_RUN, 0) }, "KVM_RUN")?;
+        let r = unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_RUN, 0) };
+        if r < 0 {
+            let e = errno();
+            if e == libc::EINTR { return Ok(VcpuExit::Intr); }
+            return Err(KvmError::Ioctl { name: "KVM_RUN", errno: e });
+        }
         Ok(decode_exit(unsafe { &*self.run_ptr }, self.run_ptr))
     }
 

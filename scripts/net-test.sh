@@ -74,10 +74,6 @@ mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev 2>/dev/null
 
 echo
-echo "=== guest: interfaces before bringup ==="
-ip -br link
-
-echo
 echo "=== guest: bringing eth0 up ==="
 ip link set lo up
 ip link set eth0 up
@@ -86,11 +82,13 @@ ip route add default via 10.0.0.1
 
 echo
 echo "=== guest: interfaces after bringup ==="
-ip -br addr
+ip addr show eth0
 
 echo
-echo "=== guest: ping 10.0.0.1 (3 packets, 1s timeout each) ==="
-ping -c 3 -W 1 10.0.0.1
+echo "=== guest: ping 10.0.0.1 (three separate one-shot pings) ==="
+ping -c 1 -W 1 10.0.0.1
+ping -c 1 -W 1 10.0.0.1
+ping -c 1 -W 1 10.0.0.1
 
 echo
 echo "=== guest: arp / neighbor table ==="
@@ -113,12 +111,13 @@ ls -la "$INITRAMFS"
 echo
 echo "=== BOOTING GUEST ==="
 cd "$REPO"
-timeout 20 sg kvm -c "cargo run --quiet --bin ingot -- run \
+cargo build --release --quiet --bin ingot
+timeout 30 sg kvm -c "./target/release/ingot run \
   --kernel '$KERNEL' \
   --initramfs '$INITRAMFS' \
   --memory 256 \
   --tap tap0 \
-  --cmdline 'console=ttyS0,115200 virtio_mmio.device=4K@0xd0000000:5 reboot=k panic=1' \
+  --cmdline 'console=ttyS0,115200 quiet virtio_mmio.device=4K@0xd0000000:5 reboot=k panic=1' \
   < /dev/null" 2>&1 | tee "$GUEST_LOG"
 
 # --- pass / fail summary ----------------------------------------------------
