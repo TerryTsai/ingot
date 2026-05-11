@@ -358,45 +358,49 @@ Consequence: `ingot` cannot be MITM'd between caller and guest at the applicatio
 
 ## 11. File and module layout
 
-Phase 0 sketches the structure below. Files marked _later_ are placeholders; they are added in their phase. Telemetry types live alongside `Outcome` (top-level) because they are a public-API concern, not a lifecycle internal — `lifecycle` writes them; callers read them.
+The layout splits **orchestration** from **primitives**:
+
+- The top-level `vm.rs` is the orchestrator. Reading it top-to-bottom is reading the VM's lifecycle. It composes the primitives below; it is allowed to be long.
+- Subsystem directories hold **primitives**. Every primitive file follows the same template (`docs/style.md`): module doc → imports → constants → `pub(crate) struct` → `impl` block(s) → trait impls → inline `#[cfg(test)] mod tests`. File name is the snake_case form of the struct name. Tests live next to the code they cover.
 
 ```
 src/
-  lib.rs                — public surface: Vm, module declarations, re-exports
-  config.rs             — Config, BlockSpec, NetSpec, VsockSpec, StdoutSink
-  error.rs              — IngotError, HostError, From impls
-  outcome.rs            — Outcome, ExitStatus, GuestFaultReason, Telemetry, TransitionEvent
-  guest_mem.rs          — GuestMem
+  lib.rs                — public surface: re-exports only
+  vm.rs                 — orchestrator: Vm struct, new + run + run loop + state machine
+  config.rs             — Config + spec types
+  outcome.rs            — Outcome, ExitStatus, Telemetry, TransitionEvent
+  error.rs              — IngotError, HostError
+  memory.rs             — Memory (guest physical memory mapping)
+  state.rs              — State enum + transition function
   kvm/
-    mod.rs              — module declarations, RegState, KvmError, error helpers
-    ioctls.rs           — KVM ioctl request numbers (computed; kvm-bindings does not expose them)
-    host.rs             — Kvm: open, create_vm
-    vm.rs               — VmFd: set_user_memory_region, create_vcpu
-    vcpu.rs             — VcpuFd: get/set regs, run, Drop
-    exit.rs             — VcpuExit + kvm_run union decoders
-    tests/              — unit tests, organized by the file under test
+    mod.rs              — re-exports + KvmError + RegState + error helpers
+    ioctls.rs           — KVM ioctl request numbers (support file, not a primitive)
+    kvm_fd.rs           — KvmFd (handle to /dev/kvm)
+    vm_fd.rs            — VmFd (handle to a KVM VM)
+    vcpu_fd.rs          — VcpuFd (handle to a vCPU)
+    vcpu_exit.rs        — VcpuExit + decoder (support file)
   boot/
-    mod.rs              — KernelImage, InitramfsImage, BootParams, load/build/prime
-    elf.rs              — ELF parsing (later)
-    pagetables.rs       — identity-map page table construction (later)
-    boot_params.rs      — Linux x86_64 boot_params struct (later)
+    mod.rs              — re-exports + Kernel value type + build_boot_params
+    elf_loader.rs       — ElfLoader
+    page_tables.rs      — PageTables
+    gdt.rs              — Gdt
+    boot_params.rs      — BootParams
+    initramfs.rs        — Initramfs
+    vcpu_primer.rs      — VcpuPrimer
   devices/
-    mod.rs              — MmioDevice trait, MmioBus, GuestError, Interrupt
-    uart.rs             — 8250 UART
-    block.rs            — virtio-block
-    net.rs              — virtio-net
-    vsock.rs            — virtio-vsock
-    virtqueue.rs        — shared virtio queue parsing, validated (later)
-  lifecycle/
-    mod.rs              — Runtime, run loop entry point
-    state.rs            — State enum + transition function
+    mod.rs              — MmioDevice trait, GuestError, Interrupt
+    mmio_bus.rs         — MmioBus
+    uart.rs             — Uart + UartInput
+    block.rs            — Block (Phase 3 placeholder)
+    net.rs              — Net (Phase 4 placeholder)
+    vsock.rs            — Vsock (Phase 5 placeholder)
   bin/
     ingot.rs            — CLI: thin wrapper over public API
 ```
 
 Phase 7 introduces `ingot-jailer` as a sibling crate. At that point the repository becomes a Cargo workspace with `ingot/` and `ingot-jailer/` as members. The jailer does not link `ingot`; it treats the VMM as an opaque binary it isolates and execs.
 
-Every file in this layout is subject to the 100-line limit (SPEC.md §5.1). Subsystem directories will grow more files; existing files do not grow past the limit.
+Per SPEC.md §5.1: primitive files keep the 100-line limit; the orchestrator (`vm.rs`) and inline test modules are exempt. The 20-line function limit applies everywhere.
 
 ## 12. Falsification targets
 

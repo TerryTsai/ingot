@@ -4,14 +4,14 @@
 use std::path::Path;
 
 use super::{GuestError, Interrupt, MmioDevice};
-use crate::guest_mem::GuestMem;
+use crate::memory::Memory;
 
 pub(crate) struct Block {
     _placeholder: (),
 }
 
 impl Block {
-    pub fn new(path: &Path, readonly: bool, mem: &GuestMem) -> Self {
+    pub fn new(path: &Path, readonly: bool, mem: &Memory) -> Self {
         unimplemented!()
     }
 }

@@ -1,49 +1,30 @@
-//! Linux x86_64 boot protocol.
+//! Linux x86_64 boot protocol primitives. Each primitive lives in its
+//! own file and exposes a small struct/impl surface; the orchestrator
+//! composes them in `vm.rs` to bring a guest up to its entry point.
 
 mod boot_params;
-mod elf;
+mod elf_loader;
 mod gdt;
 mod initramfs;
-mod pagetables;
-mod prime;
-
-#[cfg(test)]
-mod tests;
-
-use crate::error::HostError;
-use crate::guest_mem::GuestMem;
-use crate::kvm::RegState;
+mod page_tables;
+mod vcpu_primer;
 
 pub use boot_params::BootParams;
+pub(crate) use elf_loader::ElfLoader;
+pub use initramfs::Initramfs;
+pub(crate) use vcpu_primer::VcpuPrimer;
 
-pub struct KernelImage {
+pub struct Kernel {
     pub entry_point: u64,
     pub end_addr: u64,
 }
 
-pub struct InitramfsImage {
-    pub start_addr: u64,
-    pub size: u64,
-}
-
-pub fn load_kernel(image: &[u8], mem: &mut GuestMem) -> Result<KernelImage, HostError> {
-    elf::load(image, mem)
-}
-
-pub fn load_initramfs(
-    image: &[u8],
-    mem: &mut GuestMem,
-    kernel: &KernelImage,
-) -> Result<InitramfsImage, HostError> {
-    initramfs::load(image, mem, kernel)
-}
-
 pub fn build_boot_params(
-    initramfs: Option<&InitramfsImage>,
+    initramfs: Option<&Initramfs>,
     cmdline_addr: u64,
     cmdline_max: u32,
     mem_size: u64,
-) -> Result<BootParams, HostError> {
+) -> Result<BootParams, crate::error::HostError> {
     let mut bp = BootParams::new();
     bp.set_cmdline(cmdline_addr, cmdline_max);
     if let Some(img) = initramfs {
@@ -53,12 +34,4 @@ pub fn build_boot_params(
     bp.add_e820_entry(0xA_0000, 0x6_0000, boot_params::E820_RESERVED)?;
     bp.add_e820_entry(0x10_0000, mem_size - 0x10_0000, boot_params::E820_RAM)?;
     Ok(bp)
-}
-
-pub fn prime_vcpu(
-    kernel: &KernelImage,
-    params_addr: u64,
-    mem: &mut GuestMem,
-) -> Result<RegState, HostError> {
-    prime::prime(kernel, params_addr, mem)
 }

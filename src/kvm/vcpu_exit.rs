@@ -1,6 +1,6 @@
-//! VcpuExit: the parsed shape of a kvm_run exit_reason and its associated
-//! union payload. Decoders for the two kinds we care about in Phase 1
-//! (MMIO, port-IO) plus pass-through for everything else.
+//! Parsed shape of a vCPU exit reason and the kvm_run union payload
+//! that accompanies it. Decoders cover the exits handled in Phase 2:
+//! halt, shutdown, MMIO, and port-I/O.
 
 use kvm_bindings::{kvm_run, KVM_EXIT_HLT, KVM_EXIT_IO, KVM_EXIT_MMIO, KVM_EXIT_SHUTDOWN};
 
@@ -30,16 +30,9 @@ fn decode_mmio(m: &kvm_bindings::kvm_run__bindgen_ty_1__bindgen_ty_6) -> VcpuExi
     if m.is_write != 0 {
         let mut data = [0u8; 8];
         data[..n].copy_from_slice(&m.data[..n]);
-        VcpuExit::MmioWrite {
-            addr: m.phys_addr,
-            data,
-            len: n,
-        }
+        VcpuExit::MmioWrite { addr: m.phys_addr, data, len: n }
     } else {
-        VcpuExit::MmioRead {
-            addr: m.phys_addr,
-            len: n,
-        }
+        VcpuExit::MmioRead { addr: m.phys_addr, len: n }
     }
 }
 
@@ -49,15 +42,8 @@ fn decode_io(run_base: *const u8, io: &kvm_bindings::kvm_run__bindgen_ty_1__bind
         let mut data = [0u8; 4];
         let src = unsafe { std::slice::from_raw_parts(run_base.add(io.data_offset as usize), n) };
         data[..n].copy_from_slice(src);
-        VcpuExit::IoOut {
-            port: io.port,
-            data,
-            len: n,
-        }
+        VcpuExit::IoOut { port: io.port, data, len: n }
     } else {
-        VcpuExit::IoIn {
-            port: io.port,
-            len: n,
-        }
+        VcpuExit::IoIn { port: io.port, len: n }
     }
 }

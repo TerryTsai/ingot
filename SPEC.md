@@ -47,7 +47,7 @@ These are binding. Decisions that violate any of them are wrong, even when they 
 2. **Foundations validated by spike, not by elegance.** No foundational design is considered settled until it has survived a one-off implementation attempt against each long-term ambition. Architecture that looks beautiful on paper but cannot support its goals is the worst possible outcome. Falsification spikes are a required step in the design phase, not optional.
 3. **Hostile workloads by default.** Every workload running inside Ingot is treated as untrusted, including the project author's own workloads. The jailer, seccomp filter, egress proxy, and resource limits are non-negotiable. There are no "trusted mode" bypasses. The moment a bypass exists, the project's threat model collapses and so does its reason to exist.
 4. **Library first, daemon never (until forced).** Ingot is embedded in caller programs as a library. A CLI exists for one-shot use, implemented as a thin shell over the library. An HTTP control plane is not built unless and until concrete, written requirements make it unavoidable. Most existing VMM API complexity comes from premature daemonization and the project will not repeat the mistake.
-5. **Readable code is auditable code.** No file exceeds 100 lines. No function exceeds 20 lines. Every abstraction justifies itself in writing. The code is the documentation; the documentation is the design doc; the design doc is this constitution. The auditability differentiator is purchased through these constraints, not through later cleanup.
+5. **Readable code is auditable code.** Primitive files do not exceed 100 lines of production code; the orchestrator (`vm.rs`) and inline test modules are exempt. No function exceeds 20 lines. Every primitive file follows the same template (see §5.1). Every abstraction justifies itself in writing. The code is the documentation; the documentation is the design doc; the design doc is this constitution. The auditability differentiator is purchased through these constraints, not through later cleanup.
 
 ### 2.4 The differentiator axes (private, not public)
 
@@ -349,7 +349,16 @@ Approximately 6-8 months of consistent focused work to reach the end of Phase 10
 
 ### 5.1 Code style
 
-- **File length:** No file exceeds 100 lines. Splits are by responsibility, not by arbitrary line count.
+- **File length:** Primitive files do not exceed 100 lines of production code (tests in the same file via `#[cfg(test)] mod tests` are counted separately). The orchestrator file `vm.rs` is exempt — it composes all primitives and is expected to be long. Splits within a subsystem are by responsibility, not by arbitrary line count.
+- **Primitive file template (hard rule, every primitive file structurally identical):**
+  1. Module doc (`//!`).
+  2. `use` imports.
+  3. Module-private constants (grouped).
+  4. `pub(crate) struct PrimitiveName { ... }` — file name is `primitive_name.rs` (snake_case of the struct).
+  5. `impl PrimitiveName { ... }` — constructor first, then public methods, then private helpers.
+  6. Optional trait impls (e.g. `impl MmioDevice for Foo`, `impl Drop`), in a fixed order.
+  7. `#[cfg(test)] mod tests { ... }` — inline tests at the bottom.
+  Stateless procedural primitives use unit structs (`pub(crate) struct ElfLoader;`) so the template still applies. Support files (constants, decoders) that are not primitives are exempt from the template but still follow item 1 (module doc) and item 2 (imports).
 - **Function length:** No function exceeds 20 lines. If a function cannot be understood in five seconds, it is restructured.
 - **Naming:** Plain, functional, descriptive. No metaphor extensions. No abbreviations beyond well-established ones (`vm`, `kvm`, `mmio`).
 - **Comments:** Comments explain why, not what. Code that needs a comment to explain what it does is rewritten to be self-explanatory.

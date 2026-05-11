@@ -1,12 +1,9 @@
-//! Linux x86_64 boot_params.
-//!
-//! See arch/x86/include/uapi/asm/bootparam.h. The full struct nests
-//! several smaller structs and is 4 KiB total. Rather than redefining
-//! all of it, we operate on a 4 KiB byte buffer at known offsets — the
-//! 64-bit boot protocol only reads a small number of fields.
+//! Linux x86_64 boot_params builder. The full struct is 4 KiB with
+//! many nested sub-structs; we operate on a byte buffer at known
+//! offsets and only set the fields the 64-bit boot protocol reads.
 
 use crate::error::HostError;
-use crate::guest_mem::GuestMem;
+use crate::memory::Memory;
 
 const SIZE: usize = 4096;
 
@@ -75,7 +72,7 @@ impl BootParams {
         Ok(())
     }
 
-    pub fn write_to(&self, addr: u64, mem: &mut GuestMem) -> Result<(), HostError> {
+    pub fn write_to(&self, addr: u64, mem: &mut Memory) -> Result<(), HostError> {
         mem.write(addr, &self.bytes)
             .map_err(|_| HostError::InvalidConfig("boot_params write failed"))?;
         Ok(())
@@ -93,5 +90,60 @@ impl BootParams {
 impl Default for BootParams {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::boot::{build_boot_params, Initramfs};
+
+    fn u16_at(b: &[u8], off: usize) -> u16 { u16::from_le_bytes(b[off..off + 2].try_into().unwrap()) }
+    fn u32_at(b: &[u8], off: usize) -> u32 { u32::from_le_bytes(b[off..off + 4].try_into().unwrap()) }
+    fn u64_at(b: &[u8], off: usize) -> u64 { u64::from_le_bytes(b[off..off + 8].try_into().unwrap()) }
+
+    #[test]
+    fn defaults_set_protocol_signature() {
+        let bp = BootParams::new();
+        let b = bp.as_bytes();
+        assert_eq!(b[0x210], 0xFF);
+        assert_eq!(u16_at(b, 0x1FE), 0xAA55);
+        assert_eq!(u32_at(b, 0x202), 0x53726448);
+        assert_eq!(u16_at(b, 0x206), 0x020F);
+    }
+
+    #[test]
+    fn cmdline_and_initramfs_fields() {
+        let mut bp = BootParams::new();
+        bp.set_cmdline(0x20000, 2048);
+        bp.set_initramfs(0x500_0000, 0x10_0000);
+        let b = bp.as_bytes();
+        assert_eq!(u32_at(b, 0x228), 0x20000);
+        assert_eq!(u32_at(b, 0x0C8), 0);
+        assert_eq!(u32_at(b, 0x238), 2048);
+        assert_eq!(u32_at(b, 0x218), 0x500_0000);
+        assert_eq!(u32_at(b, 0x0C0), 0);
+        assert_eq!(u32_at(b, 0x21C), 0x10_0000);
+    }
+
+    #[test]
+    fn e820_entries_appended() {
+        let mut bp = BootParams::new();
+        bp.add_e820_entry(0, 0xA_0000, E820_RAM).unwrap();
+        bp.add_e820_entry(0xA_0000, 0x6_0000, E820_RESERVED).unwrap();
+        let b = bp.as_bytes();
+        assert_eq!(b[0x1E8], 2);
+        assert_eq!(u64_at(b, 0x2D0), 0);
+        assert_eq!(u64_at(b, 0x2D0 + 8), 0xA_0000);
+        assert_eq!(u32_at(b, 0x2D0 + 16), E820_RAM);
+    }
+
+    #[test]
+    fn build_boot_params_layout() {
+        let initramfs = Initramfs { start_addr: 0x500_0000, size: 0x10_0000 };
+        let bp = build_boot_params(Some(&initramfs), 0x20000, 2048, 128 * 1024 * 1024).unwrap();
+        let b = bp.as_bytes();
+        assert_eq!(u32_at(b, 0x218), 0x500_0000);
+        assert_eq!(b[0x1E8], 3);
     }
 }

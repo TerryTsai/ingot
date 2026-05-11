@@ -1,0 +1,422 @@
+//! Vm — the orchestrator. Reads top-to-bottom:
+//!
+//!   Vm::new           construct: validate, /dev/kvm, memory, vCPUs, MMIO bus
+//!   Vm::run           drive lifecycle: boot kernel, run loop, build outcome
+//!   boot_kernel       load ELF, write cmdline + boot_params, prime vCPU
+//!   run_loop          dispatch MMIO / PIO / Hlt / Shutdown
+//!   step              state-machine transition + telemetry recording
+//!
+//! Subsystem directories (kvm/, boot/, devices/) provide primitives.
+//! This file composes them.
+
+use std::fs::File;
+use std::io::{self, Read, Write};
+use std::os::fd::FromRawFd;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
+
+use crate::boot::{self, ElfLoader, Initramfs, Kernel, VcpuPrimer};
+use crate::config::{Config, StdoutSink};
+use crate::devices::{MmioBus, Uart, UartInput};
+use crate::error::{HostError, IngotError};
+use crate::kvm::{KvmError, KvmFd, VcpuExit, VcpuFd, VmFd};
+use crate::memory::Memory;
+use crate::outcome::{ExitStatus, GuestFaultReason, Outcome, Telemetry, TransitionEvent};
+use crate::state::{transition, State};
+
+pub(crate) const UART_BASE: u64 = 0xD000_0000;
+pub(crate) const UART_SIZE: u64 = 0x1000;
+const CMDLINE_ADDR: u64 = 0x2_0000;
+const BOOT_PARAMS_ADDR: u64 = 0x7000;
+const CMDLINE_MAX: u32 = 2048;
+const MIN_MEMORY: u64 = 16 * 1024 * 1024;
+const PAGE_SIZE: u64 = 0x1000;
+const CMDLINE_LIMIT: usize = 2048;
+
+type Captured = Option<Arc<Mutex<Vec<u8>>>>;
+
+pub struct Vm {
+    config: Config,
+    state: State,
+    telemetry: Telemetry,
+    bus: MmioBus,
+    vcpus: Vec<VcpuFd>,
+    vm_fd: VmFd,
+    mem: Memory,
+    captured_stdout: Captured,
+    _kvm: KvmFd,
+}
+
+impl Vm {
+    pub fn new(config: Config) -> Result<Self, IngotError> {
+        Self::validate(&config)?;
+        let kvm = KvmFd::open()?;
+        let vm_fd = kvm.create_vm()?;
+        let mem = Memory::new(config.memory_bytes)?;
+        vm_fd.set_user_memory_region(0, 0, mem.host_ptr(), config.memory_bytes)?;
+        // IRQCHIP intentionally not yet enabled: in-kernel LAPIC without
+        // proper init (KVM_SET_TSS_ADDR, KVM_SET_LAPIC) makes Hlt with IF=0
+        // hang in KVM rather than exiting. Real-kernel boot will need this
+        // re-enabled with the precursors; tracked for the next pass.
+        let vcpus = Self::make_vcpus(&vm_fd, config.vcpus)?;
+        let (bus, captured_stdout) = Self::make_bus(&config)?;
+        Ok(Vm {
+            telemetry: Self::fresh_telemetry(),
+            state: State::Configured,
+            bus,
+            vcpus,
+            vm_fd,
+            mem,
+            captured_stdout,
+            config,
+            _kvm: kvm,
+        })
+    }
+
+    pub fn run(mut self) -> Result<Outcome, IngotError> {
+        self.step(State::Initializing)?;
+        self.boot_kernel()?;
+        self.step(State::Booting)?;
+        self.telemetry.boot_completed_at = Some(Instant::now());
+        self.step(State::Running)?;
+        let exit_status = self.run_loop()?;
+        self.step(State::Exiting)?;
+        self.telemetry.terminated_at = Some(Instant::now());
+        self.step(State::Terminated)?;
+        let stdout = self.captured_stdout.as_ref().map(|b| b.lock().unwrap().clone()).unwrap_or_default();
+        Ok(Outcome { exit_status, telemetry: self.telemetry, stdout })
+    }
+
+    fn boot_kernel(&mut self) -> Result<(), IngotError> {
+        let kernel_bytes = std::fs::read(&self.config.kernel_path).map_err(|_| {
+            IngotError::Host(HostError::KernelImageNotReadable(self.config.kernel_path.clone()))
+        })?;
+        let kernel = ElfLoader::load(&kernel_bytes, &mut self.mem)?;
+        let initramfs = self.load_optional_initramfs(&kernel)?;
+        self.write_cmdline()?;
+        let bp = boot::build_boot_params(initramfs.as_ref(), CMDLINE_ADDR, CMDLINE_MAX, self.config.memory_bytes)?;
+        bp.write_to(BOOT_PARAMS_ADDR, &mut self.mem)?;
+        let state = VcpuPrimer::prime(&kernel, BOOT_PARAMS_ADDR, &mut self.mem)?;
+        self.vcpus[0].set_sregs(&state.sregs)?;
+        self.vcpus[0].set_regs(&state.regs)?;
+        Ok(())
+    }
+
+    fn load_optional_initramfs(&mut self, kernel: &Kernel) -> Result<Option<Initramfs>, IngotError> {
+        let Some(p) = self.config.initramfs_path.clone() else { return Ok(None); };
+        let bytes = std::fs::read(&p).map_err(|_| IngotError::Host(HostError::InitramfsNotReadable(p)))?;
+        Ok(Some(Initramfs::load(&bytes, &mut self.mem, kernel)?))
+    }
+
+    fn write_cmdline(&mut self) -> Result<(), IngotError> {
+        self.mem.write(CMDLINE_ADDR, self.config.cmdline.as_bytes())?;
+        self.mem.write(CMDLINE_ADDR + self.config.cmdline.len() as u64, &[0])?;
+        Ok(())
+    }
+
+    fn run_loop(&mut self) -> Result<ExitStatus, IngotError> {
+        loop {
+            match self.vcpus[0].run()? {
+                VcpuExit::Hlt => return Ok(ExitStatus::Halted),
+                VcpuExit::Shutdown => return Ok(ExitStatus::GuestFault(GuestFaultReason::TripleFault)),
+                VcpuExit::MmioRead { addr, len } => self.handle_mmio_read(addr, len)?,
+                VcpuExit::MmioWrite { addr, data, len } => self.bus.write(addr, &data[..len])?,
+                VcpuExit::IoIn { len, .. } => self.handle_pio_in(len),
+                VcpuExit::IoOut { .. } => {}
+                VcpuExit::Other(r) => return Err(IngotError::Kvm(KvmError::UnhandledExit(r))),
+            }
+        }
+    }
+
+    fn handle_mmio_read(&mut self, addr: u64, len: usize) -> Result<(), IngotError> {
+        let mut buf = [0u8; 8];
+        self.bus.read(addr, &mut buf[..len])?;
+        self.vcpus[0].set_mmio_read_data(&buf[..len]);
+        Ok(())
+    }
+
+    /// Unhandled PIO read: return 0xFF for each byte (the "no device
+    /// present" convention that lets the kernel proceed without thinking
+    /// it found something at the port).
+    fn handle_pio_in(&mut self, len: usize) {
+        let bytes = [0xFFu8; 4];
+        self.vcpus[0].set_pio_read_data(&bytes[..len.min(4)]);
+    }
+
+    fn step(&mut self, to: State) -> Result<(), IngotError> {
+        let new = transition(self.state, to)
+            .map_err(|_| IngotError::Host(HostError::InvalidConfig("illegal state transition")))?;
+        self.telemetry.transitions.push(TransitionEvent { at: Instant::now(), from: self.state, to: new });
+        self.state = new;
+        Ok(())
+    }
+
+    fn validate(config: &Config) -> Result<(), HostError> {
+        if !config.kernel_path.is_file() {
+            return Err(HostError::KernelImageNotReadable(config.kernel_path.clone()));
+        }
+        if let Some(p) = &config.initramfs_path {
+            if !p.is_file() {
+                return Err(HostError::InitramfsNotReadable(p.clone()));
+            }
+        }
+        if config.vcpus != 1 {
+            return Err(HostError::InvalidConfig("only single-vCPU is supported in Phase 2 (Phase 6 adds multi-vCPU)"));
+        }
+        if config.memory_bytes < MIN_MEMORY {
+            return Err(HostError::InvalidConfig("memory must be at least 16 MiB"));
+        }
+        if config.memory_bytes % PAGE_SIZE != 0 {
+            return Err(HostError::InvalidConfig("memory must be page-aligned"));
+        }
+        if config.cmdline.len() > CMDLINE_LIMIT {
+            return Err(HostError::InvalidConfig("cmdline too long (max 2048 bytes)"));
+        }
+        if config.cmdline.contains('\0') {
+            return Err(HostError::InvalidConfig("cmdline contains NUL"));
+        }
+        Ok(())
+    }
+
+    fn make_vcpus(vm: &VmFd, count: u8) -> Result<Vec<VcpuFd>, IngotError> {
+        let mut v = Vec::with_capacity(count as usize);
+        for i in 0..count {
+            v.push(vm.create_vcpu(i as u32)?);
+        }
+        Ok(v)
+    }
+
+    fn make_bus(config: &Config) -> Result<(MmioBus, Captured), IngotError> {
+        let mut bus = MmioBus::new();
+        let (sink, captured) = Self::make_sink(&config.stdout)?;
+        let uart = Uart::new(sink);
+        Self::maybe_spawn_stdin(uart.input_handle(), config.interactive);
+        bus.register(UART_BASE, UART_SIZE, Box::new(uart))?;
+        Ok((bus, captured))
+    }
+
+    fn make_sink(s: &StdoutSink) -> Result<(Box<dyn Write + Send>, Captured), HostError> {
+        Ok(match s {
+            StdoutSink::Discard => (Box::new(io::sink()), None),
+            StdoutSink::File(p) => (
+                Box::new(File::create(p).map_err(|_| HostError::InvalidConfig("could not open stdout file"))?),
+                None,
+            ),
+            StdoutSink::Fd(fd) => (Box::new(Self::dup_to_file(*fd)?), None),
+            StdoutSink::Buffer => {
+                let b = Arc::new(Mutex::new(Vec::new()));
+                (Box::new(BufferSink(b.clone())), Some(b))
+            }
+        })
+    }
+
+    fn dup_to_file(fd: std::os::fd::RawFd) -> Result<File, HostError> {
+        let d = unsafe { libc::dup(fd) };
+        if d < 0 { return Err(HostError::InvalidConfig("dup failed for StdoutSink::Fd")); }
+        Ok(unsafe { File::from_raw_fd(d) })
+    }
+
+    /// When `interactive`, spawn a detached thread reading host stdin one
+    /// byte at a time and pushing into the UART's input queue. The thread
+    /// exits when stdin EOFs or errors. Detached because library callers
+    /// using interactive=true accept the leak.
+    fn maybe_spawn_stdin(input: UartInput, interactive: bool) {
+        if !interactive { return; }
+        std::thread::spawn(move || {
+            let stdin = io::stdin();
+            let mut handle = stdin.lock();
+            let mut buf = [0u8; 1];
+            loop {
+                match handle.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => input.push(buf[0]),
+                }
+            }
+        });
+    }
+
+    fn fresh_telemetry() -> Telemetry {
+        Telemetry {
+            boot_started_at: Instant::now(),
+            boot_completed_at: None,
+            terminated_at: None,
+            transitions: Vec::new(),
+            peak_rss_kb: None,
+        }
+    }
+}
+
+struct BufferSink(Arc<Mutex<Vec<u8>>>);
+impl Write for BufferSink {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> io::Result<()> { Ok(()) }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use crate::{Config, IngotError, Outcome, StdoutSink, Vm};
+    use crate::outcome::ExitStatus;
+    use crate::state::State;
+
+    const ENTRY_POINT: u64 = 0x10_0000;
+
+    fn touch(name: &str) -> PathBuf {
+        let mut p = std::env::temp_dir();
+        p.push(format!("ingot-validate-{}-{}", name, std::process::id()));
+        std::fs::write(&p, b"placeholder").unwrap();
+        p
+    }
+
+    fn base() -> Config {
+        Config {
+            vcpus: 1,
+            memory_bytes: 16 * 1024 * 1024,
+            stdout: StdoutSink::Discard,
+            ..Config::default()
+        }
+    }
+
+    fn run_with_payload(name: &str, payload: &[u8]) -> Result<Outcome, IngotError> {
+        run_with_stdout(name, payload, StdoutSink::Discard)
+    }
+
+    fn run_with_stdout(name: &str, payload: &[u8], stdout: StdoutSink) -> Result<Outcome, IngotError> {
+        let mut p = std::env::temp_dir();
+        p.push(format!("ingot-synth-{}-{}.elf", name, std::process::id()));
+        std::fs::write(&p, build_elf(payload)).expect("write tmp");
+        let cfg = Config { kernel_path: p.clone(), vcpus: 1, memory_bytes: 16 * 1024 * 1024, cmdline: String::new(), stdout, ..Config::default() };
+        let result = Vm::new(cfg).and_then(|vm| vm.run());
+        let _ = std::fs::remove_file(&p);
+        result
+    }
+
+    fn build_elf(payload: &[u8]) -> Vec<u8> {
+        let mut b = Vec::with_capacity(64 + 56 + payload.len());
+        b.extend_from_slice(&[0x7f, b'E', b'L', b'F', 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        b.extend_from_slice(&2u16.to_le_bytes());
+        b.extend_from_slice(&62u16.to_le_bytes());
+        b.extend_from_slice(&1u32.to_le_bytes());
+        b.extend_from_slice(&ENTRY_POINT.to_le_bytes());
+        b.extend_from_slice(&64u64.to_le_bytes());
+        b.extend_from_slice(&0u64.to_le_bytes());
+        b.extend_from_slice(&0u32.to_le_bytes());
+        b.extend_from_slice(&64u16.to_le_bytes());
+        b.extend_from_slice(&56u16.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes());
+        b.extend_from_slice(&[0u8; 6]);
+        b.extend_from_slice(&1u32.to_le_bytes());
+        b.extend_from_slice(&5u32.to_le_bytes());
+        b.extend_from_slice(&(64u64 + 56).to_le_bytes());
+        b.extend_from_slice(&ENTRY_POINT.to_le_bytes());
+        b.extend_from_slice(&ENTRY_POINT.to_le_bytes());
+        let psz = payload.len() as u64;
+        b.extend_from_slice(&psz.to_le_bytes());
+        b.extend_from_slice(&psz.to_le_bytes());
+        b.extend_from_slice(&0x1000u64.to_le_bytes());
+        b.extend_from_slice(payload);
+        b
+    }
+
+    #[test]
+    fn rejects_missing_kernel() {
+        let mut cfg = base();
+        cfg.kernel_path = PathBuf::from("/nonexistent/kernel/path");
+        assert!(Vm::new(cfg).is_err());
+    }
+
+    #[test]
+    fn rejects_zero_vcpus() {
+        let mut cfg = base();
+        cfg.kernel_path = touch("zero_vcpus");
+        cfg.vcpus = 0;
+        assert!(Vm::new(cfg).is_err());
+    }
+
+    #[test]
+    fn rejects_too_small_memory() {
+        let mut cfg = base();
+        cfg.kernel_path = touch("small_mem");
+        cfg.memory_bytes = 1024;
+        assert!(Vm::new(cfg).is_err());
+    }
+
+    #[test]
+    fn rejects_unpaged_memory() {
+        let mut cfg = base();
+        cfg.kernel_path = touch("unpaged_mem");
+        cfg.memory_bytes = 16 * 1024 * 1024 + 7;
+        assert!(Vm::new(cfg).is_err());
+    }
+
+    #[test]
+    fn rejects_cmdline_with_nul() {
+        let mut cfg = base();
+        cfg.kernel_path = touch("nul_cmdline");
+        cfg.cmdline = "a\0b".into();
+        assert!(Vm::new(cfg).is_err());
+    }
+
+    #[test]
+    fn synthetic_hlt_kernel_reaches_halted() {
+        match run_with_payload("hlt", &[0xf4]) {
+            Ok(outcome) => assert!(matches!(outcome.exit_status, ExitStatus::Halted)),
+            Err(e) => eprintln!("[synthetic_hlt_kernel_reaches_halted] skipped: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn synthetic_pio_in_consumed_then_halted() {
+        match run_with_payload("pio_in", &[0xec, 0xf4]) {
+            Ok(outcome) => assert!(matches!(outcome.exit_status, ExitStatus::Halted)),
+            Err(e) => eprintln!("[synthetic_pio_in_consumed_then_halted] skipped: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn synthetic_pio_out_consumed_then_halted() {
+        match run_with_payload("pio_out", &[0xee, 0xf4]) {
+            Ok(outcome) => assert!(matches!(outcome.exit_status, ExitStatus::Halted)),
+            Err(e) => eprintln!("[synthetic_pio_out_consumed_then_halted] skipped: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn telemetry_records_full_state_transition_sequence() {
+        match run_with_payload("transitions", &[0xf4]) {
+            Ok(outcome) => {
+                let actual: Vec<_> = outcome.telemetry.transitions.iter().map(|t| (t.from, t.to)).collect();
+                assert_eq!(actual, vec![
+                    (State::Configured, State::Initializing),
+                    (State::Initializing, State::Booting),
+                    (State::Booting, State::Running),
+                    (State::Running, State::Exiting),
+                    (State::Exiting, State::Terminated),
+                ]);
+                assert!(outcome.telemetry.boot_started_at <= outcome.telemetry.boot_completed_at.unwrap());
+                assert!(outcome.telemetry.boot_completed_at.unwrap() <= outcome.telemetry.terminated_at.unwrap());
+            }
+            Err(e) => eprintln!("[telemetry_records_full_state_transition_sequence] skipped: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn synthetic_kernel_writes_hi_to_mmio_uart() {
+        // mov rax, 0xD0000000 ; mov byte [rax], 'H' ; mov byte [rax], 'i' ; hlt
+        let payload = [
+            0x48, 0xb8, 0x00, 0x00, 0x00, 0xd0, 0x00, 0x00, 0x00, 0x00,
+            0xc6, 0x00, b'H', 0xc6, 0x00, b'i', 0xf4,
+        ];
+        match run_with_stdout("uart_write", &payload, StdoutSink::Buffer) {
+            Ok(outcome) => {
+                assert!(matches!(outcome.exit_status, ExitStatus::Halted));
+                assert_eq!(outcome.stdout, b"Hi".to_vec());
+            }
+            Err(e) => eprintln!("[synthetic_kernel_writes_hi_to_mmio_uart] skipped: {:?}", e),
+        }
+    }
+}

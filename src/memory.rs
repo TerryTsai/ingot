@@ -1,19 +1,17 @@
-//! Guest physical memory mapping.
-//!
-//! A single mmap-backed region [0, size). MMIO is outside this range
-//! and is not backed by GuestMem.
+//! Guest physical memory: a single mmap-backed region [0, size). MMIO
+//! lives outside this range and is not backed by `Memory`.
 
 use std::io;
 
 use crate::devices::GuestError;
 use crate::error::HostError;
 
-pub struct GuestMem {
+pub(crate) struct Memory {
     ptr: *mut u8,
     size: u64,
 }
 
-impl GuestMem {
+impl Memory {
     pub fn new(size_bytes: u64) -> Result<Self, HostError> {
         let p = unsafe {
             libc::mmap(
@@ -28,7 +26,7 @@ impl GuestMem {
         if p == libc::MAP_FAILED {
             return Err(HostError::MmapFailed(errno()));
         }
-        Ok(GuestMem { ptr: p as *mut u8, size: size_bytes })
+        Ok(Memory { ptr: p as *mut u8, size: size_bytes })
     }
 
     pub fn write(&mut self, guest_phys: u64, data: &[u8]) -> Result<(), GuestError> {
@@ -56,15 +54,14 @@ impl GuestMem {
     }
 
     fn bounds_check(&self, guest_phys: u64, len: usize) -> Result<(), GuestError> {
-        let end = guest_phys.checked_add(len as u64);
-        match end {
-            Some(e) if e <= self.size => Ok(()),
+        match guest_phys.checked_add(len as u64) {
+            Some(end) if end <= self.size => Ok(()),
             _ => Err(GuestError::InvalidGuestPhys { addr: guest_phys, len }),
         }
     }
 }
 
-impl Drop for GuestMem {
+impl Drop for Memory {
     fn drop(&mut self) {
         unsafe {
             libc::munmap(self.ptr as _, self.size as usize);
@@ -77,4 +74,39 @@ fn errno() -> i32 {
 }
 
 #[cfg(test)]
-mod tests;
+mod tests {
+    use super::*;
+
+    const ONE_MB: u64 = 1024 * 1024;
+
+    #[test]
+    fn allocates_and_writes() {
+        let mut mem = Memory::new(ONE_MB).expect("mmap");
+        mem.write(0, b"hello").expect("write");
+        let mut buf = [0u8; 5];
+        mem.read(0, &mut buf).expect("read");
+        assert_eq!(&buf, b"hello");
+    }
+
+    #[test]
+    fn rejects_out_of_bounds_write() {
+        let mut mem = Memory::new(ONE_MB).expect("mmap");
+        assert!(mem.write(ONE_MB - 4, &[1, 2, 3, 4, 5]).is_err());
+    }
+
+    #[test]
+    fn rejects_overflow_in_bounds_check() {
+        let mut mem = Memory::new(ONE_MB).expect("mmap");
+        assert!(mem.write(u64::MAX - 1, &[1, 2, 3]).is_err());
+    }
+
+    #[test]
+    fn write_at_boundary_succeeds() {
+        let mut mem = Memory::new(ONE_MB).expect("mmap");
+        let buf = vec![0xab; 16];
+        mem.write(ONE_MB - 16, &buf).expect("write at boundary");
+        let mut readback = [0u8; 16];
+        mem.read(ONE_MB - 16, &mut readback).expect("read at boundary");
+        assert_eq!(readback.as_slice(), buf.as_slice());
+    }
+}

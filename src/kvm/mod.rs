@@ -1,28 +1,24 @@
-//! KVM ioctl wrapper.
-//!
-//! Phase 1: opens /dev/kvm, creates VMs and vCPUs, registers guest memory,
-//! runs vCPUs, surfaces exit reasons. No knowledge of Linux boot, virtio,
-//! lifecycle, or configuration — those are other subsystems' concerns.
+//! KVM ioctl wrappers. The three Fd primitives (`KvmFd`, `VmFd`,
+//! `VcpuFd`) own their respective KVM file descriptors and expose the
+//! minimum surface the orchestrator needs.
 
 use std::io;
 
 use kvm_bindings::{kvm_regs, kvm_sregs};
 
-mod exit;
-mod host;
 mod ioctls;
-mod vcpu;
-mod vm;
+mod kvm_fd;
+mod vcpu_exit;
+mod vcpu_fd;
+mod vm_fd;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod test_helpers;
 
-pub use exit::VcpuExit;
-pub use host::Kvm;
-pub use vcpu::VcpuFd;
-pub use vm::VmFd;
-
-const DEV_KVM: &[u8] = b"/dev/kvm\0";
+pub(crate) use kvm_fd::KvmFd;
+pub use vcpu_exit::VcpuExit;
+pub(crate) use vcpu_fd::VcpuFd;
+pub(crate) use vm_fd::VmFd;
 
 pub struct RegState {
     pub regs: kvm_regs,

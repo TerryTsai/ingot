@@ -1,20 +1,15 @@
-//! virtio devices and 8250 UART. MMIO transport only.
-//!
-//! UART and MmioBus are real (Phase 2). The virtio devices remain
-//! sketches until Phases 3–5.
+//! MMIO devices: the trait every device implements, the bus that
+//! dispatches to them, and the 8250 UART. virtio block/net/vsock are
+//! Phase 3+ placeholders.
 
 mod block;
-mod bus;
+mod mmio_bus;
 mod net;
 mod uart;
 mod vsock;
 
-#[cfg(test)]
-mod tests;
-
-pub(crate) use bus::MmioBus;
+pub(crate) use mmio_bus::MmioBus;
 pub(crate) use uart::{Uart, UartInput};
-// block::Block, net::Net, vsock::Vsock re-exports added in Phase 3+ when used.
 
 pub(crate) trait MmioDevice: Send {
     fn read(&mut self, offset: u64, data: &mut [u8]) -> Result<(), GuestError>;

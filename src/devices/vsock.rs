@@ -4,14 +4,14 @@
 use std::os::unix::io::RawFd;
 
 use super::{GuestError, Interrupt, MmioDevice};
-use crate::guest_mem::GuestMem;
+use crate::memory::Memory;
 
 pub(crate) struct Vsock {
     _placeholder: (),
 }
 
 impl Vsock {
-    pub fn new(host_listener_fd: RawFd, guest_cid: u32, mem: &GuestMem) -> Self {
+    pub fn new(host_listener_fd: RawFd, guest_cid: u32, mem: &Memory) -> Self {
         unimplemented!()
     }
 }

@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use crate::lifecycle::State;
+use crate::state::State;
 
 pub struct Outcome {
     pub exit_status: ExitStatus,

@@ -4,14 +4,14 @@
 use std::os::unix::io::RawFd;
 
 use super::{GuestError, Interrupt, MmioDevice};
-use crate::guest_mem::GuestMem;
+use crate::memory::Memory;
 
 pub(crate) struct Net {
     _placeholder: (),
 }
 
 impl Net {
-    pub fn new(tap_fd: RawFd, mem: &GuestMem) -> Self {
+    pub fn new(tap_fd: RawFd, mem: &Memory) -> Self {
         unimplemented!()
     }
 }

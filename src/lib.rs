@@ -6,33 +6,19 @@
 
 mod config;
 mod error;
-mod guest_mem;
+mod memory;
 mod outcome;
+mod state;
 
 mod boot;
 mod devices;
 mod kvm;
-mod lifecycle;
+mod vm;
 
 pub use config::{BlockSpec, Config, NetSpec, StdoutSink, VsockSpec};
 pub use devices::GuestError;
 pub use error::{HostError, IngotError};
 pub use kvm::KvmError;
-pub use lifecycle::State;
 pub use outcome::{ExitStatus, GuestFaultReason, Outcome, Telemetry, TransitionEvent};
-
-pub struct Vm {
-    runtime: lifecycle::Runtime,
-}
-
-impl Vm {
-    pub fn new(config: Config) -> Result<Self, IngotError> {
-        Ok(Vm {
-            runtime: lifecycle::Runtime::new(config)?,
-        })
-    }
-
-    pub fn run(self) -> Result<Outcome, IngotError> {
-        lifecycle::run(self.runtime)
-    }
-}
+pub use state::State;
+pub use vm::Vm;
