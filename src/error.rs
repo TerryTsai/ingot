@@ -36,6 +36,7 @@ pub enum HostError {
     InvalidConfig(&'static str),
     MmapFailed(i32),
     TapCreateFailed(i32),
+    TapOpenFailed(i32),
     SeccompInstallFailed(i32),
     CgroupSetupFailed(i32),
 }

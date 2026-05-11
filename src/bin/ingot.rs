@@ -1,4 +1,6 @@
-//! Ingot CLI: `ingot run --kernel PATH [--initramfs PATH] [--memory MiB] [--cmdline STR]`
+//! Ingot CLI:
+//!   ingot run --kernel PATH [--initramfs PATH] [--memory MiB]
+//!             [--cmdline STR] [--tap NAME]
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -50,6 +52,7 @@ fn apply_arg(args: &[String], i: usize, c: &mut Config) -> Result<usize, u8> {
         "--initramfs" => c.initramfs_path = Some(PathBuf::from(value)),
         "--memory" => c.memory_bytes = value.parse::<u64>().unwrap_or(128) * 1024 * 1024,
         "--cmdline" => c.cmdline = value.clone(),
+        "--tap" => c.tap_name = Some(value.clone()),
         other => {
             eprintln!("ingot: unknown option {}", other);
             return Err(2);

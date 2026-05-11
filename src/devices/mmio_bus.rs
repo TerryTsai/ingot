@@ -52,6 +52,13 @@ impl MmioBus {
         out
     }
 
+    pub fn poll_io(&mut self, mem: &mut crate::memory::Memory) -> Result<(), GuestError> {
+        for r in &mut self.regions {
+            r.device.poll_io(mem)?;
+        }
+        Ok(())
+    }
+
     fn find(&mut self, addr: u64, len: usize) -> Result<&mut Region, GuestError> {
         let len = len as u64;
         for r in &mut self.regions {

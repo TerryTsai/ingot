@@ -17,7 +17,7 @@ use std::time::Instant;
 
 use crate::boot::{self, ElfLoader, Initramfs, Kernel, MpTable, VcpuPrimer};
 use crate::config::{Config, StdoutSink};
-use crate::devices::{MmioBus, Net, Uart, UartInput, COM1_BASE, COM1_GSI, COM1_LAST};
+use crate::devices::{MmioBus, Net, Tap, Uart, UartInput, COM1_BASE, COM1_GSI, COM1_LAST};
 use crate::error::{HostError, IngotError};
 use crate::kvm::{Cpuid, KvmError, KvmFd, VcpuExit, VcpuFd, VmFd};
 use crate::memory::Memory;
@@ -77,7 +77,8 @@ impl Vm {
         let vcpus = Self::make_vcpus(&vm_fd, config.vcpus, &cpuid)?;
         let (uart, captured_stdout) = Self::make_uart(&config)?;
         let mut bus = MmioBus::new();
-        bus.register(VIRTIO_NET_BASE, VIRTIO_NET_SIZE, Box::new(Net::new(VIRTIO_NET_MAC)))?;
+        let tap = config.tap_name.as_deref().map(Tap::open).transpose()?;
+        bus.register(VIRTIO_NET_BASE, VIRTIO_NET_SIZE, Box::new(Net::new(VIRTIO_NET_MAC, tap)))?;
         Ok(Vm {
             telemetry: Self::fresh_telemetry(),
             state: State::Configured,
@@ -152,6 +153,7 @@ impl Vm {
                 self.vm_fd.set_irq_line(COM1_GSI, now as u32)?;
                 uart_irq = now;
             }
+            self.bus.poll_io(&mut self.mem)?;
             for (_, intr) in self.bus.pending_interrupts() {
                 self.vm_fd.set_irq_line(intr.gsi, 0)?;
                 self.vm_fd.set_irq_line(intr.gsi, 1)?;

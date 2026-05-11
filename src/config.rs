@@ -16,6 +16,10 @@ pub struct Config {
     /// feeds bytes into the UART's input queue. CLI sets this; library
     /// callers leave it false.
     pub interactive: bool,
+    /// Optional host-side TAP interface name to bind virtio-net to.
+    /// Caller is responsible for pre-creating the device with the
+    /// appropriate ownership (`ip tuntap add <name> mode tap user X`).
+    pub tap_name: Option<String>,
 }
 
 pub struct BlockSpec {
