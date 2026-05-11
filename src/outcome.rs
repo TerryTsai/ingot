@@ -33,6 +33,10 @@ pub enum GuestFaultReason {
 pub struct Telemetry {
     pub boot_started_at: Instant,
     pub boot_completed_at: Option<Instant>,
+    /// First byte the guest emitted to its serial console (= UART TX).
+    /// Approximation of "kernel started running" — for measuring cold
+    /// boot per SPEC §2.4. Caller subtracts `boot_started_at`.
+    pub first_output_at: Option<Instant>,
     pub terminated_at: Option<Instant>,
     pub transitions: Vec<TransitionEvent>,
     pub peak_rss_kb: Option<u64>,

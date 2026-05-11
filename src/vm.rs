@@ -52,6 +52,7 @@ const VIRTIO_VSOCK_BASE: u64 = 0xD000_2000;
 const VIRTIO_VSOCK_SIZE: u64 = 0x1000;
 
 type Captured = Option<Arc<Mutex<Vec<u8>>>>;
+type FirstOutput = Arc<Mutex<Option<Instant>>>;
 
 /// A configured microVM, ready to run. Construct with [`Vm::new`] and
 /// consume with [`Vm::run`]. The library API is two methods because the
@@ -67,6 +68,7 @@ pub struct Vm {
     vm_fd: VmFd,
     mem: Memory,
     captured_stdout: Captured,
+    first_output: FirstOutput,
     cmos_index: u8,
     _kvm: KvmFd,
 }
@@ -104,7 +106,7 @@ impl Vm {
         vm_fd.create_pit2()?;
         let cpuid = kvm.supported_cpuid()?;
         let vcpus = Self::make_vcpus(&vm_fd, config.vcpus, &cpuid)?;
-        let (uart, captured_stdout) = Self::make_uart(&config)?;
+        let (uart, captured_stdout, first_output) = Self::make_uart(&config)?;
         let mut bus = MmioBus::new();
         let tap = config.tap_name.as_deref().map(Tap::open).transpose()?;
         bus.register(VIRTIO_NET_BASE, VIRTIO_NET_SIZE, Box::new(Net::new(VIRTIO_NET_MAC, tap)))?;
@@ -125,6 +127,7 @@ impl Vm {
             vm_fd,
             mem,
             captured_stdout,
+            first_output,
             cmos_index: 0,
             config,
             _kvm: kvm,
@@ -151,6 +154,7 @@ impl Vm {
         self.telemetry.terminated_at = Some(Instant::now());
         self.step(State::Terminated)?;
         let stdout = self.captured_stdout.as_ref().map(|b| b.lock().unwrap().clone()).unwrap_or_default();
+        self.telemetry.first_output_at = *self.first_output.lock().unwrap();
         Ok(Outcome { exit_status, telemetry: self.telemetry, stdout })
     }
 
@@ -294,11 +298,13 @@ impl Vm {
         Ok(v)
     }
 
-    fn make_uart(config: &Config) -> Result<(Uart, Captured), IngotError> {
-        let (sink, captured) = Self::make_sink(&config.stdout)?;
+    fn make_uart(config: &Config) -> Result<(Uart, Captured, FirstOutput), IngotError> {
+        let (inner, captured) = Self::make_sink(&config.stdout)?;
+        let first_output: FirstOutput = Arc::new(Mutex::new(None));
+        let sink: Box<dyn Write + Send> = Box::new(FirstWriteSink { inner, first_at: first_output.clone() });
         let uart = Uart::new(sink);
         Self::maybe_spawn_stdin(uart.input_handle(), config.interactive);
-        Ok((uart, captured))
+        Ok((uart, captured, first_output))
     }
 
     fn make_sink(s: &StdoutSink) -> Result<(Box<dyn Write + Send>, Captured), HostError> {
@@ -355,6 +361,7 @@ impl Vm {
         Telemetry {
             boot_started_at: Instant::now(),
             boot_completed_at: None,
+            first_output_at: None,
             terminated_at: None,
             transitions: Vec::new(),
             peak_rss_kb: None,
@@ -405,6 +412,23 @@ impl Write for BufferSink {
         Ok(buf.len())
     }
     fn flush(&mut self) -> io::Result<()> { Ok(()) }
+}
+
+/// Sink wrapper that records the moment of the first non-empty write.
+/// Used to mark `Telemetry::first_output_at` for cold-boot measurement.
+struct FirstWriteSink {
+    inner: Box<dyn Write + Send>,
+    first_at: Arc<Mutex<Option<Instant>>>,
+}
+impl Write for FirstWriteSink {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if !buf.is_empty() {
+            let mut g = self.first_at.lock().unwrap();
+            if g.is_none() { *g = Some(Instant::now()); }
+        }
+        self.inner.write(buf)
+    }
+    fn flush(&mut self) -> io::Result<()> { self.inner.flush() }
 }
 
 #[cfg(test)]
