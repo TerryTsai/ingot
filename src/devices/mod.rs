@@ -2,6 +2,7 @@
 //! MMIO bus, plus the legacy 8250 UART exposed at PIO COM1 (§3.1.3).
 
 mod block;
+mod block_io;
 mod mmio_bus;
 mod net;
 mod net_io;
@@ -12,6 +13,7 @@ mod virtio_mmio;
 mod virtio_queue;
 mod vsock;
 
+pub(crate) use block::Block;
 pub(crate) use mmio_bus::MmioBus;
 pub(crate) use net::Net;
 pub(crate) use tap::Tap;

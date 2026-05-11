@@ -1,11 +1,19 @@
 //! Ingot CLI:
-//!   ingot run --kernel PATH [--initramfs PATH] [--memory MiB]
-//!             [--cmdline STR] [--tap NAME]
+//!   ingot run --kernel PATH [--initramfs PATH] [--rootfs PATH[:ro]]
+//!             [--memory MiB] [--cmdline STR] [--tap NAME]
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use ingot::{Config, StdoutSink, Vm};
+use ingot::{BlockSpec, Config, StdoutSink, Vm};
+
+fn parse_rootfs(value: &str) -> BlockSpec {
+    let (path, readonly) = match value.strip_suffix(":ro") {
+        Some(p) => (p, true),
+        None => (value, false),
+    };
+    BlockSpec { path: PathBuf::from(path), readonly }
+}
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
@@ -50,6 +58,7 @@ fn apply_arg(args: &[String], i: usize, c: &mut Config) -> Result<usize, u8> {
     match name.as_str() {
         "--kernel" => c.kernel_path = PathBuf::from(value),
         "--initramfs" => c.initramfs_path = Some(PathBuf::from(value)),
+        "--rootfs" => c.rootfs = Some(parse_rootfs(value)),
         "--memory" => c.memory_bytes = value.parse::<u64>().unwrap_or(128) * 1024 * 1024,
         "--cmdline" => c.cmdline = value.clone(),
         "--tap" => c.tap_name = Some(value.clone()),
