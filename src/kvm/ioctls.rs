@@ -28,10 +28,13 @@ const fn ioc(dir: u32, ty: u32, nr: u32, size: u32) -> c_ulong {
 pub const KVM_GET_API_VERSION: c_ulong = ioc(DIR_NONE, KVMIO, 0x00, 0);
 pub const KVM_CREATE_VM: c_ulong = ioc(DIR_NONE, KVMIO, 0x01, 0);
 pub const KVM_GET_VCPU_MMAP_SIZE: c_ulong = ioc(DIR_NONE, KVMIO, 0x04, 0);
+pub const KVM_GET_SUPPORTED_CPUID: c_ulong = ioc(DIR_READ | DIR_WRITE, KVMIO, 0x05, 8);
 pub const KVM_CREATE_VCPU: c_ulong = ioc(DIR_NONE, KVMIO, 0x41, 0);
 pub const KVM_SET_TSS_ADDR: c_ulong = ioc(DIR_NONE, KVMIO, 0x47, 0);
 pub const KVM_CREATE_IRQCHIP: c_ulong = ioc(DIR_NONE, KVMIO, 0x60, 0);
+pub const KVM_CREATE_PIT2: c_ulong = ioc(DIR_WRITE, KVMIO, 0x77, 64);
 pub const KVM_RUN: c_ulong = ioc(DIR_NONE, KVMIO, 0x80, 0);
+pub const KVM_SET_CPUID2: c_ulong = ioc(DIR_WRITE, KVMIO, 0x90, 8);
 
 pub const KVM_SET_USER_MEMORY_REGION: c_ulong =
     ioc(DIR_WRITE, KVMIO, 0x46, size_of::<kvm_userspace_memory_region>() as u32);

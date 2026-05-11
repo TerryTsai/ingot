@@ -6,6 +6,7 @@ use std::io;
 
 use kvm_bindings::{kvm_regs, kvm_sregs};
 
+mod cpuid;
 mod ioctls;
 mod kvm_fd;
 mod vcpu_exit;
@@ -15,6 +16,7 @@ mod vm_fd;
 #[cfg(test)]
 pub(crate) mod test_helpers;
 
+pub(crate) use cpuid::Cpuid;
 pub(crate) use kvm_fd::KvmFd;
 pub use vcpu_exit::VcpuExit;
 pub(crate) use vcpu_fd::VcpuFd;

@@ -5,6 +5,7 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 
 use kvm_bindings::KVM_API_VERSION;
 
+use super::cpuid::Cpuid;
 use super::ioctls::*;
 use super::vm_fd::VmFd;
 use super::{check, errno, KvmError};
@@ -43,6 +44,16 @@ impl KvmFd {
             "KVM_CREATE_VM",
         )?;
         Ok(VmFd::new(unsafe { OwnedFd::from_raw_fd(raw) }, self.vcpu_mmap_size))
+    }
+
+    /// Returns the CPUID entries KVM will honor when set on a vCPU.
+    pub fn supported_cpuid(&self) -> Result<Box<Cpuid>, KvmError> {
+        let mut buf = Cpuid::new();
+        check(
+            unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_GET_SUPPORTED_CPUID, &mut *buf) },
+            "KVM_GET_SUPPORTED_CPUID",
+        )?;
+        Ok(buf)
     }
 }
 

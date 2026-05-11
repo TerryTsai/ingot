@@ -5,6 +5,7 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 
 use kvm_bindings::{kvm_regs, kvm_run, kvm_sregs};
 
+use super::cpuid::Cpuid;
 use super::ioctls::*;
 use super::vcpu_exit::{decode_exit, VcpuExit};
 use super::{check, errno, KvmError};
@@ -62,6 +63,14 @@ impl VcpuFd {
 
     pub fn set_sregs(&self, sregs: &kvm_sregs) -> Result<(), KvmError> {
         check(unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_SET_SREGS, sregs) }, "KVM_SET_SREGS")?;
+        Ok(())
+    }
+
+    pub fn set_cpuid2(&self, cpuid: &Cpuid) -> Result<(), KvmError> {
+        check(
+            unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_SET_CPUID2, cpuid as *const _) },
+            "KVM_SET_CPUID2",
+        )?;
         Ok(())
     }
 

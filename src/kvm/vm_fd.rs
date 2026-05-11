@@ -41,6 +41,17 @@ impl VmFd {
         Ok(())
     }
 
+    /// Enables KVM's in-kernel 8253 PIT emulation. Linux uses PIT for early
+    /// timer calibration; without it the kernel hangs after init_IRQ.
+    pub fn create_pit2(&self) -> Result<(), KvmError> {
+        let config = [0u32; 16]; // struct kvm_pit_config { flags=0, pad[15]=0 }
+        check(
+            unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_CREATE_PIT2, &config) },
+            "KVM_CREATE_PIT2",
+        )?;
+        Ok(())
+    }
+
     pub fn set_user_memory_region(
         &self,
         slot: u32,

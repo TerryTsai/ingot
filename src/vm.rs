@@ -19,7 +19,7 @@ use crate::boot::{self, ElfLoader, Initramfs, Kernel, VcpuPrimer};
 use crate::config::{Config, StdoutSink};
 use crate::devices::{MmioBus, Uart, UartInput};
 use crate::error::{HostError, IngotError};
-use crate::kvm::{KvmError, KvmFd, VcpuExit, VcpuFd, VmFd};
+use crate::kvm::{Cpuid, KvmError, KvmFd, VcpuExit, VcpuFd, VmFd};
 use crate::memory::Memory;
 use crate::outcome::{ExitStatus, GuestFaultReason, Outcome, Telemetry, TransitionEvent};
 use crate::state::{transition, State};
@@ -59,7 +59,9 @@ impl Vm {
         vm_fd.set_user_memory_region(0, 0, mem.host_ptr(), config.memory_bytes)?;
         vm_fd.set_tss_addr(TSS_ADDR)?;
         vm_fd.create_irqchip()?;
-        let vcpus = Self::make_vcpus(&vm_fd, config.vcpus)?;
+        vm_fd.create_pit2()?;
+        let cpuid = kvm.supported_cpuid()?;
+        let vcpus = Self::make_vcpus(&vm_fd, config.vcpus, &cpuid)?;
         let (bus, captured_stdout) = Self::make_bus(&config)?;
         Ok(Vm {
             telemetry: Self::fresh_telemetry(),
@@ -179,10 +181,12 @@ impl Vm {
         Ok(())
     }
 
-    fn make_vcpus(vm: &VmFd, count: u8) -> Result<Vec<VcpuFd>, IngotError> {
+    fn make_vcpus(vm: &VmFd, count: u8, cpuid: &Cpuid) -> Result<Vec<VcpuFd>, IngotError> {
         let mut v = Vec::with_capacity(count as usize);
         for i in 0..count {
-            v.push(vm.create_vcpu(i as u32)?);
+            let vcpu = vm.create_vcpu(i as u32)?;
+            vcpu.set_cpuid2(cpuid)?;
+            v.push(vcpu);
         }
         Ok(v)
     }
