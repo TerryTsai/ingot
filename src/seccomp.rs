@@ -4,10 +4,10 @@
 //! written justification.
 //!
 //! Two install modes (CLI `--seccomp`):
-//!   - `log`    — filter logs blocked syscalls to dmesg, allows them.
-//!                Use during development to enumerate the allowlist.
-//!   - `strict` — kills the process on any syscall outside the list.
-//!                Production posture once the allowlist is stable.
+//! - `log` — filter logs blocked syscalls to dmesg, allows them. Use
+//!   during development to enumerate the allowlist.
+//! - `strict` — kills the process on any syscall outside the list.
+//!   Production posture once the allowlist is stable.
 
 use std::io;
 

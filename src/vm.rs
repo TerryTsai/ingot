@@ -25,14 +25,13 @@ use crate::outcome::{ExitStatus, GuestFaultReason, Outcome, Telemetry, Transitio
 use crate::state::{transition, State};
 
 const CMDLINE_ADDR: u64 = 0x2_0000;
+const CMDLINE_MAX: usize = 2048;
 const BOOT_PARAMS_ADDR: u64 = 0x7000;
-const CMDLINE_MAX: u32 = 2048;
 /// KVM's 3-page TSS region, placed in the high I/O hole below 4 GiB so it
 /// doesn't conflict with the userspace memory region or the MMIO bus.
 const TSS_ADDR: u32 = 0xfffb_d000;
 const MIN_MEMORY: u64 = 16 * 1024 * 1024;
 const PAGE_SIZE: u64 = 0x1000;
-const CMDLINE_LIMIT: usize = 2048;
 /// CMOS RTC PIO ports. Index register selects which CMOS byte; data
 /// register reads/writes it. The kernel's `read_persistent_clock` and
 /// TSC calibration both poke these; returning 0xFF for data would set
@@ -40,11 +39,10 @@ const CMDLINE_LIMIT: usize = 2048;
 const CMOS_INDEX: u16 = 0x70;
 const CMOS_DATA: u16 = 0x71;
 /// virtio-mmio device regions: 4 KiB each, kernel learns of them via
-/// `virtio_mmio.device=4K@<addr>:<irq>` cmdline params. IRQ 5/6 stay
-/// clear of legacy ISA assignments (timer=0, UART=4, RTC=8).
+/// `virtio_mmio.device=4K@<addr>:<irq>` cmdline params. IRQs 5/6/7
+/// stay clear of legacy ISA assignments (timer=0, UART=4, RTC=8).
 const VIRTIO_NET_BASE: u64 = 0xD000_0000;
 const VIRTIO_NET_SIZE: u64 = 0x1000;
-const VIRTIO_NET_GSI: u32 = 5;
 const VIRTIO_NET_MAC: [u8; 6] = [0x52, 0x54, 0x00, 0xC0, 0xFF, 0xEE];
 const VIRTIO_BLK_BASE: u64 = 0xD000_1000;
 const VIRTIO_BLK_SIZE: u64 = 0x1000;
@@ -279,7 +277,7 @@ impl Vm {
         if !config.memory_bytes.is_multiple_of(PAGE_SIZE) {
             return Err(HostError::InvalidConfig("memory must be page-aligned"));
         }
-        if config.cmdline.len() > CMDLINE_LIMIT {
+        if config.cmdline.len() > CMDLINE_MAX {
             return Err(HostError::InvalidConfig("cmdline too long (max 2048 bytes)"));
         }
         if config.cmdline.contains('\0') {

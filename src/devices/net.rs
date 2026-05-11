@@ -1,36 +1,79 @@
 //! virtio-net (virtio 1.x §5.1) over MMIO. Queue 0 = RX, queue 1 = TX.
-//! Two-queue netdev with optional TAP backing — see `net_io.rs` for the
-//! actual frame-flow code. This file is the MMIO-facing surface: device
-//! identity, feature negotiation, config space (MAC), notify dispatch.
+//! Optional TAP backing — `drain_tx` walks the TX virtqueue's available
+//! chains, strips the leading 12-byte vnet_hdr, and writes the L2 frame
+//! to the TAP fd. `drain_rx` does the inverse on non-blocking TAP reads:
+//! prefix a zeroed vnet_hdr, scatter into the next free RX chain.
 
-use super::net_io::{drain_rx, drain_tx};
 use super::tap::Tap;
-use super::virtio_mmio::VirtioMmio;
+use super::virtio_mmio::{VirtioMmio, CONFIG_BASE, INT_USED_RING, VENDOR_ID, VIRTIO_F_VERSION_1};
 use super::{GuestError, Interrupt, MmioDevice};
 use crate::memory::Memory;
 
 const DEVICE_ID_NET: u32 = 1;
-const VENDOR_ID: u32 = 0x494E_474F;
-const VIRTIO_F_VERSION_1: u64 = 1 << 32;
 const VIRTIO_NET_F_MAC: u64 = 1 << 5;
-const NUM_QUEUES: usize = 2;
-const QUEUE_TX: u32 = 1;
-const CONFIG_BASE: u64 = 0x100;
-const MAC_LEN: usize = 6;
 const VIRTIO_NET_GSI: u32 = 5;
+const NUM_QUEUES: usize = 2;
+const QUEUE_RX: usize = 0;
+const QUEUE_TX: usize = 1;
+const MAC_LEN: usize = 6;
+const VNET_HDR_LEN: usize = 12;
+const FRAME_MAX: usize = 2048;
 
 pub(crate) struct Net {
-    pub(super) mmio: VirtioMmio,
-    pub(super) mac: [u8; MAC_LEN],
-    pub(super) tap: Option<Tap>,
-    pub(super) tx_bytes: u64,
-    pub(super) tx_packets: u64,
+    mmio: VirtioMmio,
+    mac: [u8; MAC_LEN],
+    tap: Option<Tap>,
+    tx_bytes: u64,
+    tx_packets: u64,
 }
 
 impl Net {
     pub fn new(mac: [u8; MAC_LEN], tap: Option<Tap>) -> Self {
         let features = VIRTIO_F_VERSION_1 | VIRTIO_NET_F_MAC;
-        Net { mmio: VirtioMmio::new(DEVICE_ID_NET, VENDOR_ID, features, NUM_QUEUES), mac, tap, tx_bytes: 0, tx_packets: 0 }
+        Net {
+            mmio: VirtioMmio::new(DEVICE_ID_NET, VENDOR_ID, features, NUM_QUEUES),
+            mac, tap, tx_bytes: 0, tx_packets: 0,
+        }
+    }
+
+    fn drain_tx(&mut self, mem: &mut Memory) -> Result<(), GuestError> {
+        let q = &mut self.mmio.queues[QUEUE_TX];
+        let mut frame = Vec::with_capacity(FRAME_MAX);
+        let mut serviced = 0u32;
+        while let Some(head) = q.pop_avail(mem)? {
+            frame.clear();
+            q.read_chain(mem, head, &mut frame)?;
+            if let Some(tap) = &self.tap {
+                if frame.len() > VNET_HDR_LEN { let _ = tap.write(&frame[VNET_HDR_LEN..]); }
+            }
+            let total = frame.len() as u32;
+            q.push_used(mem, head, total)?;
+            self.tx_packets += 1;
+            self.tx_bytes += total as u64;
+            serviced += 1;
+        }
+        if serviced > 0 { self.mmio.interrupt_status |= INT_USED_RING; }
+        Ok(())
+    }
+
+    fn drain_rx(&mut self, mem: &mut Memory) -> Result<(), GuestError> {
+        let tap = match &self.tap { Some(t) => t, None => return Ok(()) };
+        let mut buf = [0u8; FRAME_MAX];
+        let mut serviced = 0u32;
+        loop {
+            let n_read = tap.read(&mut buf).map_err(|_| GuestError::MalformedDescriptor)?;
+            if n_read == 0 { break; }
+            let q = &mut self.mmio.queues[QUEUE_RX];
+            let head = match q.pop_avail(mem)? { Some(h) => h, None => break };
+            let mut framed = Vec::with_capacity(VNET_HDR_LEN + n_read);
+            framed.extend_from_slice(&[0u8; VNET_HDR_LEN]);
+            framed.extend_from_slice(&buf[..n_read]);
+            let w = q.write_chain(mem, head, &framed)?;
+            q.push_used(mem, head, w)?;
+            serviced += 1;
+        }
+        if serviced > 0 { self.mmio.interrupt_status |= INT_USED_RING; }
+        Ok(())
     }
 }
 
@@ -53,7 +96,7 @@ impl MmioDevice for Net {
         if data.len() != 4 { return Err(GuestError::MmioOutOfRange { addr: offset }); }
         let v = u32::from_le_bytes(data.try_into().unwrap());
         if let Some(q) = self.mmio.write_reg(offset, v) {
-            if q == QUEUE_TX { drain_tx(self, mem)?; }
+            if q as usize == QUEUE_TX { self.drain_tx(mem)?; }
         }
         Ok(())
     }
@@ -62,7 +105,7 @@ impl MmioDevice for Net {
         if self.mmio.interrupt_status != 0 { Some(Interrupt { gsi: VIRTIO_NET_GSI }) } else { None }
     }
 
-    fn poll_io(&mut self, mem: &mut Memory) -> Result<(), GuestError> { drain_rx(self, mem) }
+    fn poll_io(&mut self, mem: &mut Memory) -> Result<(), GuestError> { self.drain_rx(mem) }
 }
 
 #[cfg(test)]

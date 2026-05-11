@@ -50,9 +50,22 @@ pub(crate) struct VhostVsock {
     mem_base: u64,
 }
 
+/// Per-queue configuration passed to `configure_vring`. Bundles the
+/// seven values vhost needs into one struct so the call site reads
+/// like a record.
+pub(crate) struct VringConfig {
+    pub idx: u32,
+    pub num: u32,
+    pub desc: u64,
+    pub avail: u64,
+    pub used: u64,
+    pub kick: RawFd,
+    pub call: RawFd,
+}
+
 impl VhostVsock {
     pub fn open(guest_cid: u64, mem_phys: u64, mem_size: u64, host_addr: u64) -> Result<Self, HostError> {
-        let raw = unsafe { libc::open(b"/dev/vhost-vsock\0".as_ptr() as _, libc::O_RDWR) };
+        let raw = unsafe { libc::open(c"/dev/vhost-vsock".as_ptr(), libc::O_RDWR) };
         if raw < 0 { return Err(HostError::VhostVsockOpenFailed(errno())); }
         let v = VhostVsock { fd: unsafe { OwnedFd::from_raw_fd(raw) }, mem_base: host_addr };
         v.ioctl_w0(VHOST_SET_OWNER)?;
@@ -65,13 +78,15 @@ impl VhostVsock {
         Ok(v)
     }
 
-    pub fn configure_vring(&self, idx: u32, num: u32, desc: u64, avail: u64, used: u64, kick: RawFd, call: RawFd) -> Result<(), HostError> {
-        let (desc, avail, used) = (desc + self.mem_base, avail + self.mem_base, used + self.mem_base);
-        self.ioctl_w(VHOST_SET_VRING_NUM, &VringState { index: idx, num })?;
-        self.ioctl_w(VHOST_SET_VRING_BASE, &VringState { index: idx, num: 0 })?;
-        self.ioctl_w(VHOST_SET_VRING_ADDR, &VringAddr { index: idx, flags: 0, desc, used, avail, log_guest_addr: 0 })?;
-        self.ioctl_w(VHOST_SET_VRING_KICK, &VringFile { index: idx, fd: kick })?;
-        self.ioctl_w(VHOST_SET_VRING_CALL, &VringFile { index: idx, fd: call })?;
+    pub fn configure_vring(&self, c: VringConfig) -> Result<(), HostError> {
+        let desc = c.desc + self.mem_base;
+        let avail = c.avail + self.mem_base;
+        let used = c.used + self.mem_base;
+        self.ioctl_w(VHOST_SET_VRING_NUM, &VringState { index: c.idx, num: c.num })?;
+        self.ioctl_w(VHOST_SET_VRING_BASE, &VringState { index: c.idx, num: 0 })?;
+        self.ioctl_w(VHOST_SET_VRING_ADDR, &VringAddr { index: c.idx, flags: 0, desc, used, avail, log_guest_addr: 0 })?;
+        self.ioctl_w(VHOST_SET_VRING_KICK, &VringFile { index: c.idx, fd: c.kick })?;
+        self.ioctl_w(VHOST_SET_VRING_CALL, &VringFile { index: c.idx, fd: c.call })?;
         Ok(())
     }
 

@@ -349,8 +349,9 @@ Approximately 6-8 months of consistent focused work to reach the end of Phase 10
 
 ### 5.1 Code style
 
-- **File length:** Primitive files do not exceed 100 lines of production code (tests in the same file via `#[cfg(test)] mod tests` are counted separately). The orchestrator file `vm.rs` is exempt — it composes all primitives and is expected to be long. Splits within a subsystem are by responsibility, not by arbitrary line count.
-- **Primitive file template (hard rule, every primitive file structurally identical):**
+- **One struct per file.** A primitive file owns exactly one struct and *every* method on it, plus any small helpers tightly bound to that struct (decoders, byte-packers, error-paths). Free functions that operate on the struct go in the same file. Splitting one primitive across multiple files (`foo.rs` + `foo_io.rs`, etc.) is forbidden — it scatters the implementation. When a file feels too long, the answer is to carve out a *new* primitive with its own struct in its own file, not to extract helpers into a sibling.
+- **File length:** No hard cap. Primitive files are as long as they need to be. The orchestrator (`vm.rs`) is the longest by design.
+- **Primitive file template (every primitive file structurally identical):**
   1. Module doc (`//!`).
   2. `use` imports.
   3. Module-private constants (grouped).
@@ -358,8 +359,8 @@ Approximately 6-8 months of consistent focused work to reach the end of Phase 10
   5. `impl PrimitiveName { ... }` — constructor first, then public methods, then private helpers.
   6. Optional trait impls (e.g. `impl MmioDevice for Foo`, `impl Drop`), in a fixed order.
   7. `#[cfg(test)] mod tests { ... }` — inline tests at the bottom.
-  Stateless procedural primitives use unit structs (`pub(crate) struct ElfLoader;`) so the template still applies. Support files (constants, decoders) that are not primitives are exempt from the template but still follow item 1 (module doc) and item 2 (imports).
-- **Function length:** No function exceeds 20 lines. If a function cannot be understood in five seconds, it is restructured.
+  Stateless procedural primitives use unit structs (`pub(crate) struct ElfLoader;`) so the template still applies. Support modules (constants, decoders, top-level shared types) that aren't primitives are exempt from the template but still follow items 1 (module doc) and 2 (imports).
+- **Function length:** Short is the default. There is no hard cap. A function that reads linearly top-to-bottom and is obvious at one glance can be 30–40 lines without harm. The test is comprehension, not line count: if you cannot follow what a function does in five seconds, restructure it (extract a clearly-named helper, fold a branch into a `match`, hoist common state). Don't extract helpers just to hit a number.
 - **Naming:** Plain, functional, descriptive. No metaphor extensions. No abbreviations beyond well-established ones (`vm`, `kvm`, `mmio`).
 - **Comments:** Comments explain why, not what. Code that needs a comment to explain what it does is rewritten to be self-explanatory.
 - **Pure functions preferred:** Where state must be threaded, it is threaded explicitly through arguments and return values, not hidden in closures or globals. Classes exist only when state genuinely needs encapsulation; the default is functions over types over traits over generics.

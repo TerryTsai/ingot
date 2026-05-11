@@ -1,19 +1,16 @@
-//! Devices: virtio block/net/vsock (Phase 3+, placeholders) over the
-//! MMIO bus, plus the legacy 8250 UART exposed at PIO COM1 (§3.1.3).
+//! Devices: virtio block/net/vsock over the MMIO bus, plus the legacy
+//! 8250 UART exposed at PIO COM1 (§3.1.3). One primitive per file —
+//! struct + every method on it live together.
 
 mod block;
-mod block_io;
 mod mmio_bus;
 mod net;
-mod net_io;
 mod tap;
 mod uart;
 mod vhost_vsock;
-mod virtio_chain;
 mod virtio_mmio;
 mod virtio_queue;
 mod vsock;
-mod vsock_io;
 
 pub(crate) use block::Block;
 pub(crate) use mmio_bus::MmioBus;

@@ -24,11 +24,11 @@ pub struct Kernel {
 pub fn build_boot_params(
     initramfs: Option<&Initramfs>,
     cmdline_addr: u64,
-    cmdline_max: u32,
+    cmdline_max: usize,
     mem_size: u64,
 ) -> Result<BootParams, crate::error::HostError> {
     let mut bp = BootParams::new();
-    bp.set_cmdline(cmdline_addr, cmdline_max);
+    bp.set_cmdline(cmdline_addr, cmdline_max as u32);
     if let Some(img) = initramfs {
         bp.set_initramfs(img.start_addr, img.size as u32);
     }
