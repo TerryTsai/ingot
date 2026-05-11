@@ -1,6 +1,5 @@
-//! MMIO devices: the trait every device implements, the bus that
-//! dispatches to them, and the 8250 UART. virtio block/net/vsock are
-//! Phase 3+ placeholders.
+//! Devices: virtio block/net/vsock (Phase 3+, placeholders) over the
+//! MMIO bus, plus the legacy 8250 UART exposed at PIO COM1 (§3.1.3).
 
 mod block;
 mod mmio_bus;
@@ -9,7 +8,7 @@ mod uart;
 mod vsock;
 
 pub(crate) use mmio_bus::MmioBus;
-pub(crate) use uart::{Uart, UartInput};
+pub(crate) use uart::{Uart, UartInput, COM1_BASE, COM1_GSI, COM1_LAST};
 
 pub(crate) trait MmioDevice: Send {
     fn read(&mut self, offset: u64, data: &mut [u8]) -> Result<(), GuestError>;

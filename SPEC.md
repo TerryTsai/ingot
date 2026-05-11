@@ -124,11 +124,11 @@ Does not know about: virtio devices, lifecycle orchestration, the KVM run loop b
 
 #### 3.1.3 `devices` — virtio device implementations
 
-Responsibilities: virtio-block, virtio-net, virtio-vsock, 8250 UART. Each device is an independent module that implements a uniform internal `MmioDevice` trait. All devices use MMIO transport. No PCI.
+Responsibilities: virtio-block, virtio-net, virtio-vsock (all virtio devices use MMIO transport — no PCI), plus the legacy 8250 UART. The 8250 is exposed at PIO COM1 (0x3F8) because Linux's 8250 driver auto-detects COM1 with no DT/ACPI plumbing; this is a one-time concession to legacy x86 that costs ~100 lines and unblocks any stock kernel. A minimal CMOS RTC shim (PIO 0x70/0x71, read-only "not updating, time = 0") lives inline in `vm.rs` rather than as a device, because the kernel's `read_persistent_clock` only needs UIP=0 to proceed and the shim is two register reads — adding a device type for it would be premature abstraction. virtio devices implement a uniform internal `MmioDevice` trait.
 
-Knows about: virtio 1.x specification, MMIO transport semantics, host-side I/O backing each device.
+Knows about: virtio 1.x specification, MMIO transport semantics, the 8250 register layout, host-side I/O backing each device.
 
-Does not know about: KVM internals beyond MMIO exit handling, lifecycle, configuration parsing.
+Does not know about: KVM internals beyond MMIO/PIO exit handling, lifecycle, configuration parsing.
 
 #### 3.1.4 `lifecycle` — VM lifecycle state machine
 

@@ -1,98 +1,79 @@
-# Phase 2 real-kernel boot — running journal
+# Phase 2 real-kernel boot — journal
 
-What we know, what we tried, and what the next pass must do to satisfy SPEC.md §4 Phase 2's done criterion:
+Status as of 2026-05-11: Phase 2 done-criterion met with the Firecracker
+quickstart kernel + busybox initramfs. Custom microvm-tuned kernel build
+is in progress as the polished final state.
 
-> `cargo run --bin ingot -- run --kernel vmlinux --initramfs init.cpio` boots to an interactive shell over serial within reasonable time.
+## Done-criterion (SPEC.md §4)
 
-## What works (verified end-to-end on KVM)
+> `cargo run --bin ingot -- run --kernel vmlinux --initramfs init.cpio`
+> boots to an interactive shell over serial within reasonable time.
 
-- Long-mode VM entry (commit `c14a02e` — TR/LDT fix).
-- Identity-mapped 1 GiB pages over 4 GiB; MMIO bus at 0xD000_0000 is reachable.
-- ELF parser handles the standard `vmlinux` shape (Debian's distro kernel + Firecracker's microvm kernel both parse and load).
-- The full boot path: validate → KVM → memory → vCPU → bus → load kernel → write cmdline → boot_params → page tables → GDT → prime_vcpu → run loop. The "Hi" synth test captures stdout end-to-end (commit `c14a02e`).
-- IRQCHIP (in-kernel APIC/IOAPIC/LAPIC) with `KVM_SET_TSS_ADDR` precursor (commit `9b91cf8`).
-- 61 tests passing under real KVM in ~0.17 s.
+Met with `/tmp/fc-vmlinux.bin` (Firecracker quickstart, 4.14.174) +
+`/tmp/initramfs.cpio.gz` (busybox-static 1.35.0). Banner + `/ #` prompt
+appear within ~6s wallclock. Piped commands execute and produce output;
+`uname -a` reports `Linux (none) 4.14.174 #2 SMP ... x86_64 GNU/Linux`.
 
-## What doesn't (yet)
+## What was added beyond the kernel boot
 
-Both **Debian's `/boot/vmlinuz-6.1.0-23-amd64`** (extracted via `scripts/extract-vmlinux`) and **Firecracker's quickstart `vmlinux.bin`** (from `s3.amazonaws.com/spec.ccfc.min/img/quickstart_guide/x86_64/kernels/vmlinux.bin`) triple-fault immediately:
+Four pieces of VMM-side work, each documented:
 
-```
-$ cargo run --bin ingot -- run --kernel /tmp/fc-vmlinux.bin --memory 256
-ingot: exit=GuestFault(TripleFault)
-```
+1. **MP table at EBDA (0x9FC00).** `src/boot/mp_table.rs`. Without it,
+   x86_64 kernels can't discover the LAPIC (ACPI is permanently out of
+   scope) and fall back to noop APIC → scheduler stalls. See
+   [docs/decisions/0002-mp-table-at-ebda.md](decisions/0002-mp-table-at-ebda.md).
 
-Zero MMIO, zero PIO. The kernel runs some instructions (otherwise we'd see `FAIL_ENTRY`, not `SHUTDOWN`) but crashes before touching the UART. Both kernels' entry points decode cleanly to standard `startup_64` → `call verify_cpu` → `call __startup_64`. The crash is somewhere in that chain.
+2. **`sregs.apic_base` set before `KVM_SET_SREGS`.** `0xFEE0_0900` =
+   xAPIC enabled at default address + BSP flag. The ioctl writes the
+   APIC base MSR; leaving it 0 disables the in-kernel LAPIC so even
+   LAPIC discovery via MP table doesn't help.
 
-## The diagnosis short-list
+3. **CMOS RTC shim inline in `vm.rs`.** `read_persistent_clock` busy-loops
+   on CMOS Status A bit 7 (Update In Progress). Returning 0xFF for all
+   PIO never clears UIP; the shim returns 0x26 for Status A so the
+   kernel proceeds. See [docs/decisions/0003-cmos-shim-inline.md](decisions/0003-cmos-shim-inline.md).
 
-In rough order of likelihood:
+4. **8250 UART moved from MMIO to PIO COM1 + IRQ injection.** MMIO 8250
+   on x86_64 requires DT/ACPI plumbing to register as a real console
+   (vs. earlycon). PIO 0x3F8 is auto-detected as `ttyS0` by Linux's
+   8250 driver. Without IRQs the kernel printk path works (polling) but
+   user-space writes via tty hang waiting for THRE. `KVM_IRQ_LINE`
+   wired to UART's `pending_irq()` after each vCPU exit. See
+   [docs/decisions/0001-uart-pio-com1.md](decisions/0001-uart-pio-com1.md).
 
-1. **`KVM_SET_CPUID2` is not called.** Without it, KVM advertises host CPUID by default; this works for some kernels but real Linux x86_64 boot expects specific feature bits in a specific shape. Most VMMs (Firecracker, crosvm, qemu) explicitly construct a CPUID table via `KVM_GET_SUPPORTED_CPUID` then `KVM_SET_CPUID2`. Concretely: we'd add `KvmFd::supported_cpuid()` + `VcpuFd::set_cpuid2(...)` primitives, call them between `create_vcpu` and `set_sregs`.
-2. **Initial MSR state is wrong.** Things like `MSR_IA32_MISC_ENABLE`, `MSR_KVM_SYSTEM_TIME_NEW` may need explicit values. The kernel reads them in `verify_cpu` / `__startup_64`.
-3. **No `KVM_SET_MP_STATE`.** Default `mp_state` for BSP under IRQCHIP should be `RUNNABLE`, but worth verifying. If it's `INIT_RECEIVED`, the vCPU sits idle.
-4. **Specific cmdline expectation.** Modern kernels require some flags (`console=`, `earlycon=`, possibly `no_timer_check`) to make progress. Our default cmdline mentions earlycon but may not match what the kernel expects.
+## Custom kernel build (in progress)
 
-Order of attack for the next pass: **(1) first** — CPUID is the most commonly-required missing piece. If kernel still triple-faults after CPUID, instrument `Vm::run` to capture `RIP` at crash via `KVM_GET_REGS` and look up the symbol in the kernel's symbol table.
+Target: minimally viable Linux 6.6 LTS kernel for compute workloads in
+high-level languages (Python, Node, etc.) with networking config bits
+enabled (virtio-net driver) so Phase 4 can wire the device side without
+a kernel rebuild.
 
-## What we can't do this pass
-
-Building a fresh kernel from source needs build deps we don't have:
-
-```
-flex, bison, bc, libelf-dev   # missing; require `sudo apt install`
-gcc, make, libssl-dev          # present
-```
-
-Sudo requires a password. To proceed via a custom kernel build (the most reliable path), one-time setup:
-
-```sh
-sudo apt install flex bison bc libelf-dev
-```
-
-After that, the build path is:
+Build path:
 
 ```sh
-cd /tmp
-curl -O https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.6.tar.xz
-tar xf linux-6.6.tar.xz
-cd linux-6.6
-# Use Firecracker's published microvm config as a starting point:
-curl -O https://raw.githubusercontent.com/firecracker-microvm/firecracker/main/resources/guest_configs/microvm-kernel-ci-x86_64-6.1.config
-mv microvm-kernel-ci-x86_64-6.1.config .config
+cd /tmp/kbuild/linux-6.6.30
+make tinyconfig
+./scripts/kconfig/merge_config.sh -m .config /tmp/ingot.config-fragment
 make olddefconfig
 make -j$(nproc) vmlinux
-# Result: ./vmlinux is an uncompressed ELF, ~10 MB, microvm-tuned.
 ```
 
-That kernel may boot under our current VMM if the boot path works for a minimal config. If it triple-faults too, the diagnosis above applies.
+The config fragment turns on (relative to tinyconfig):
+- `CONFIG_X86_64`, `CONFIG_SMP=n`, `CONFIG_HYPERVISOR_GUEST`, `CONFIG_KVM_GUEST`
+- 8250 serial console (`CONFIG_SERIAL_8250_CONSOLE`)
+- Initramfs + ELF + script binfmt
+- tmpfs / procfs / sysfs / devtmpfs (no other filesystems)
+- `FUTEX`, `EPOLL`, `EVENTFD`, `TIMERFD`, `SIGNALFD`, `INOTIFY_USER` (runtime needs)
+- `NET`, `INET`, `IPV6`, `VIRTIO`, `VIRTIO_MMIO`, `VIRTIO_NET`
+- `BLK_DEV_INITRD`, `RD_GZIP`
 
-## Initramfs
+Off: modules, PCI, ACPI, USB, sound, framebuffer, namespaces, cgroups,
+audit, KEYS, KALLSYMS, KASLR, every filesystem except the four above,
+every device driver except 8250 and the virtio family.
 
-Not needed yet; Phase 2 done-criterion needs an interactive shell which requires:
+## Networking — partial
 
-```sh
-# Statically-linked busybox + /init script + cpio archive
-# Roughly:
-mkdir -p /tmp/initramfs/{bin,sbin,etc,proc,sys}
-cp $(which busybox) /tmp/initramfs/bin/
-cat > /tmp/initramfs/init <<'EOF'
-#!/bin/busybox sh
-mount -t proc proc /proc
-mount -t sysfs sys /sys
-exec /bin/busybox sh
-EOF
-chmod +x /tmp/initramfs/init
-cd /tmp/initramfs && find . | cpio -o -H newc | gzip > /tmp/initramfs.cpio.gz
-```
-
-## Concrete next-pass actions
-
-In order:
-
-1. Add `KVM_SET_CPUID2` primitive in `kvm/vcpu_fd.rs` (and `KVM_GET_SUPPORTED_CPUID` system-fd ioctl in `kvm/kvm_fd.rs`). Call them in `Vm::new` after `create_vcpu`. ~50 lines.
-2. Retry boot. Capture `RIP` at crash via `vcpu.get_regs()` if it still fails; cross-reference kernel symbols.
-3. If still failing, add `KVM_SET_MP_STATE` (`RUNNABLE`) and any required MSRs surfaced by the RIP check.
-4. Once kernel prints anything, build a busybox initramfs and aim for the shell prompt.
-
-Each is a small, scope-clean addition. Iteration count: hard to predict; likely 3-6 commits.
+The custom kernel will have the virtio-net driver. The host-side
+virtio-net MMIO device (`src/devices/net.rs`) is currently a stub —
+implementing it is Phase 4 scope (~2 weeks per SPEC.md §4). Once that
+exists, the same kernel will see a working NIC with no rebuild.

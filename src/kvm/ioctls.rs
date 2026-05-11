@@ -32,6 +32,7 @@ pub const KVM_GET_SUPPORTED_CPUID: c_ulong = ioc(DIR_READ | DIR_WRITE, KVMIO, 0x
 pub const KVM_CREATE_VCPU: c_ulong = ioc(DIR_NONE, KVMIO, 0x41, 0);
 pub const KVM_SET_TSS_ADDR: c_ulong = ioc(DIR_NONE, KVMIO, 0x47, 0);
 pub const KVM_CREATE_IRQCHIP: c_ulong = ioc(DIR_NONE, KVMIO, 0x60, 0);
+pub const KVM_IRQ_LINE: c_ulong = ioc(DIR_WRITE, KVMIO, 0x61, 8);
 pub const KVM_CREATE_PIT2: c_ulong = ioc(DIR_WRITE, KVMIO, 0x77, 64);
 pub const KVM_RUN: c_ulong = ioc(DIR_NONE, KVMIO, 0x80, 0);
 pub const KVM_SET_CPUID2: c_ulong = ioc(DIR_WRITE, KVMIO, 0x90, 8);

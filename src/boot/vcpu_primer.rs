@@ -20,6 +20,10 @@ const CR0_PG: u64 = 1 << 31;
 const CR4_PAE: u64 = 1 << 5;
 const EFER_LME: u64 = 1 << 8;
 const EFER_LMA: u64 = 1 << 10;
+/// MSR_IA32_APIC_BASE: xAPIC at default address, globally enabled, BSP.
+/// `KVM_SET_SREGS` writes this MSR; leaving it 0 disables the in-kernel
+/// LAPIC and forces every LAPIC MMIO access out to userspace.
+const APIC_BASE_BSP_ENABLED: u64 = 0xfee0_0000 | 0x800 | 0x100;
 
 pub(crate) struct VcpuPrimer;
 
@@ -64,6 +68,7 @@ impl VcpuPrimer {
         s.cr3 = PML4_ADDR;
         s.cr4 = CR4_PAE;
         s.efer = EFER_LME | EFER_LMA;
+        s.apic_base = APIC_BASE_BSP_ENABLED;
     }
 
     fn code_segment(selector: u16) -> kvm_segment {

@@ -15,17 +15,15 @@ use std::os::fd::FromRawFd;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use crate::boot::{self, ElfLoader, Initramfs, Kernel, VcpuPrimer};
+use crate::boot::{self, ElfLoader, Initramfs, Kernel, MpTable, VcpuPrimer};
 use crate::config::{Config, StdoutSink};
-use crate::devices::{MmioBus, Uart, UartInput};
+use crate::devices::{MmioBus, Uart, UartInput, COM1_BASE, COM1_GSI, COM1_LAST};
 use crate::error::{HostError, IngotError};
 use crate::kvm::{Cpuid, KvmError, KvmFd, VcpuExit, VcpuFd, VmFd};
 use crate::memory::Memory;
 use crate::outcome::{ExitStatus, GuestFaultReason, Outcome, Telemetry, TransitionEvent};
 use crate::state::{transition, State};
 
-pub(crate) const UART_BASE: u64 = 0xD000_0000;
-pub(crate) const UART_SIZE: u64 = 0x1000;
 const CMDLINE_ADDR: u64 = 0x2_0000;
 const BOOT_PARAMS_ADDR: u64 = 0x7000;
 const CMDLINE_MAX: u32 = 2048;
@@ -35,6 +33,12 @@ const TSS_ADDR: u32 = 0xfffb_d000;
 const MIN_MEMORY: u64 = 16 * 1024 * 1024;
 const PAGE_SIZE: u64 = 0x1000;
 const CMDLINE_LIMIT: usize = 2048;
+/// CMOS RTC PIO ports. Index register selects which CMOS byte; data
+/// register reads/writes it. The kernel's `read_persistent_clock` and
+/// TSC calibration both poke these; returning 0xFF for data would set
+/// CMOS Status A's "Update In Progress" bit and hang the kernel.
+const CMOS_INDEX: u16 = 0x70;
+const CMOS_DATA: u16 = 0x71;
 
 type Captured = Option<Arc<Mutex<Vec<u8>>>>;
 
@@ -43,10 +47,12 @@ pub struct Vm {
     state: State,
     telemetry: Telemetry,
     bus: MmioBus,
+    uart: Uart,
     vcpus: Vec<VcpuFd>,
     vm_fd: VmFd,
     mem: Memory,
     captured_stdout: Captured,
+    cmos_index: u8,
     _kvm: KvmFd,
 }
 
@@ -62,15 +68,18 @@ impl Vm {
         vm_fd.create_pit2()?;
         let cpuid = kvm.supported_cpuid()?;
         let vcpus = Self::make_vcpus(&vm_fd, config.vcpus, &cpuid)?;
-        let (bus, captured_stdout) = Self::make_bus(&config)?;
+        let (uart, captured_stdout) = Self::make_uart(&config)?;
+        let bus = MmioBus::new();
         Ok(Vm {
             telemetry: Self::fresh_telemetry(),
             state: State::Configured,
             bus,
+            uart,
             vcpus,
             vm_fd,
             mem,
             captured_stdout,
+            cmos_index: 0,
             config,
             _kvm: kvm,
         })
@@ -99,6 +108,7 @@ impl Vm {
         self.write_cmdline()?;
         let bp = boot::build_boot_params(initramfs.as_ref(), CMDLINE_ADDR, CMDLINE_MAX, self.config.memory_bytes)?;
         bp.write_to(BOOT_PARAMS_ADDR, &mut self.mem)?;
+        MpTable::write_to(self.config.vcpus, &mut self.mem)?;
         let state = VcpuPrimer::prime(&kernel, BOOT_PARAMS_ADDR, &mut self.mem)?;
         self.vcpus[0].set_sregs(&state.sregs)?;
         self.vcpus[0].set_regs(&state.regs)?;
@@ -118,15 +128,21 @@ impl Vm {
     }
 
     fn run_loop(&mut self) -> Result<ExitStatus, IngotError> {
+        let mut uart_irq = false;
         loop {
             match self.vcpus[0].run()? {
                 VcpuExit::Hlt => return Ok(ExitStatus::Halted),
                 VcpuExit::Shutdown => return Ok(ExitStatus::GuestFault(GuestFaultReason::TripleFault)),
                 VcpuExit::MmioRead { addr, len } => self.handle_mmio_read(addr, len)?,
                 VcpuExit::MmioWrite { addr, data, len } => self.bus.write(addr, &data[..len])?,
-                VcpuExit::IoIn { len, .. } => self.handle_pio_in(len),
-                VcpuExit::IoOut { .. } => {}
+                VcpuExit::IoIn { port, len } => self.handle_pio_in(port, len),
+                VcpuExit::IoOut { port, data, len } => self.handle_pio_out(port, &data[..len]),
                 VcpuExit::Other(r) => return Err(IngotError::Kvm(KvmError::UnhandledExit(r))),
+            }
+            let now = self.uart.pending_irq();
+            if now != uart_irq {
+                self.vm_fd.set_irq_line(COM1_GSI, now as u32)?;
+                uart_irq = now;
             }
         }
     }
@@ -138,12 +154,23 @@ impl Vm {
         Ok(())
     }
 
-    /// Unhandled PIO read: return 0xFF for each byte (the "no device
-    /// present" convention that lets the kernel proceed without thinking
-    /// it found something at the port).
-    fn handle_pio_in(&mut self, len: usize) {
-        let bytes = [0xFFu8; 4];
+    fn handle_pio_in(&mut self, port: u16, len: usize) {
+        let value = match port {
+            CMOS_DATA => cmos_read(self.cmos_index),
+            COM1_BASE..=COM1_LAST => self.uart.read((port - COM1_BASE) as u8),
+            _ => 0xFF,
+        };
+        let bytes = [value, 0xFF, 0xFF, 0xFF];
         self.vcpus[0].set_pio_read_data(&bytes[..len.min(4)]);
+    }
+
+    fn handle_pio_out(&mut self, port: u16, data: &[u8]) {
+        if data.is_empty() { return; }
+        match port {
+            CMOS_INDEX => self.cmos_index = data[0] & 0x7F,
+            COM1_BASE..=COM1_LAST => self.uart.write((port - COM1_BASE) as u8, data[0]),
+            _ => {}
+        }
     }
 
     fn step(&mut self, to: State) -> Result<(), IngotError> {
@@ -191,13 +218,11 @@ impl Vm {
         Ok(v)
     }
 
-    fn make_bus(config: &Config) -> Result<(MmioBus, Captured), IngotError> {
-        let mut bus = MmioBus::new();
+    fn make_uart(config: &Config) -> Result<(Uart, Captured), IngotError> {
         let (sink, captured) = Self::make_sink(&config.stdout)?;
         let uart = Uart::new(sink);
         Self::maybe_spawn_stdin(uart.input_handle(), config.interactive);
-        bus.register(UART_BASE, UART_SIZE, Box::new(uart))?;
-        Ok((bus, captured))
+        Ok((uart, captured))
     }
 
     fn make_sink(s: &StdoutSink) -> Result<(Box<dyn Write + Send>, Captured), HostError> {
@@ -248,6 +273,19 @@ impl Vm {
             transitions: Vec::new(),
             peak_rss_kb: None,
         }
+    }
+}
+
+/// Return a plausible byte for CMOS register `index`. Time fields read
+/// as zero (Linux's epoch fallback is fine); status registers report
+/// "RTC running, not updating, 24h binary mode" so `read_persistent_clock`
+/// proceeds instead of busy-looping on the UIP bit.
+fn cmos_read(index: u8) -> u8 {
+    match index {
+        0x0A => 0x26,
+        0x0B => 0x06,
+        0x0D => 0x80,
+        _ => 0,
     }
 }
 
@@ -417,15 +455,17 @@ mod tests {
     }
 
     #[test]
-    fn synthetic_kernel_writes_hi_to_mmio_uart() {
-        // mov rax, 0xD0000000 ; mov byte [rax], 'H' ; mov byte [rax], 'i' ; ud2
+    fn synthetic_kernel_writes_hi_via_pio_uart() {
+        // mov dx, 0x3F8 ; mov al, 'H' ; out dx, al ; mov al, 'i' ; out dx, al ; ud2
         let payload = [
-            0x48, 0xb8, 0x00, 0x00, 0x00, 0xd0, 0x00, 0x00, 0x00, 0x00,
-            0xc6, 0x00, b'H', 0xc6, 0x00, b'i', 0x0f, 0x0b,
+            0x66, 0xba, 0xf8, 0x03,
+            0xb0, b'H', 0xee,
+            0xb0, b'i', 0xee,
+            0x0f, 0x0b,
         ];
         match run_with_stdout("uart_write", &payload, StdoutSink::Buffer) {
             Ok(outcome) => assert_eq!(outcome.stdout, b"Hi".to_vec()),
-            Err(e) => eprintln!("[synthetic_kernel_writes_hi_to_mmio_uart] skipped: {:?}", e),
+            Err(e) => eprintln!("[synthetic_kernel_writes_hi_via_pio_uart] skipped: {:?}", e),
         }
     }
 }

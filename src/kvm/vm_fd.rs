@@ -76,6 +76,18 @@ impl VmFd {
     pub fn create_vcpu(&self, id: u32) -> Result<VcpuFd, KvmError> {
         VcpuFd::create(self.fd.as_raw_fd(), id, self.vcpu_mmap_size)
     }
+
+    /// Set GSI line `irq` to `level` (1 = asserted, 0 = deasserted) on the
+    /// in-kernel IRQ chip. Edge-triggered ISA IRQs need a 0→1 pulse;
+    /// level-triggered devices set 1 and clear 0 when the source clears.
+    pub fn set_irq_line(&self, irq: u32, level: u32) -> Result<(), KvmError> {
+        let payload = [irq, level];
+        check(
+            unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_IRQ_LINE, &payload) },
+            "KVM_IRQ_LINE",
+        )?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

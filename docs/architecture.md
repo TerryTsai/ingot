@@ -81,9 +81,10 @@ Out of scope: MMIO devices, lifecycle orchestration, anything past the first gue
 Owns: `src/devices/`.
 
 Exposes to `lifecycle`:
-- `trait MmioDevice` — see §3.4 for the trait shape.
+- `trait MmioDevice` — see §3.4 for the trait shape. Used by virtio devices.
 - Constructors: `Uart::new(stdout_sink)`, `Block::new(file, readonly)`, `Net::new(tap_fd)`, `Vsock::new(host_listener_fd, guest_cid)`.
 - `MmioBus` — maps `(addr, size)` ranges to device handles, dispatches reads/writes.
+- `COM1_BASE`, `COM1_LAST`, `COM1_GSI` — port range and IRQ for the 8250 UART. The UART does *not* implement `MmioDevice`; it exposes plain `read(reg) -> u8` / `write(reg, val)` methods that `lifecycle` dispatches inline from its PIO handler. See §3.5 for the rationale.
 
 Consumes: nothing from other subsystems. Devices receive their host-side I/O resources (open files, fds) from `lifecycle` at construction.
 
@@ -135,20 +136,23 @@ A single contiguous host mapping backs guest physical memory `[0, size)`. MMIO r
 match vcpu.run()? {
     VcpuExit::MmioRead { addr, len, data } => bus.read(addr, &mut data[..len])?,
     VcpuExit::MmioWrite { addr, data } => bus.write(addr, data)?,
+    VcpuExit::IoIn { port, len } => handle_pio_in(port, len),     // UART, CMOS shim
+    VcpuExit::IoOut { port, data, len } => handle_pio_out(port, data), // UART, CMOS shim
     VcpuExit::Hlt => transition_to(Exiting),
     VcpuExit::Shutdown => transition_to(Exiting),
-    VcpuExit::IoIn { .. } | VcpuExit::IoOut { .. } => Err(GuestError::UnexpectedPio),
     other => Err(KvmError::UnhandledExit(other)),
 }
 ```
 
-Port-I/O exits are explicitly rejected: this VMM is MMIO-only and the kernel is configured accordingly. A guest issuing PIO is a configuration error or an attack.
+PIO exits are accepted only for COM1 (0x3F8–0x3FF, 8250 UART) and the CMOS RTC index/data ports (0x70/0x71). All other PIO reads return 0xFF, all other writes are dropped. virtio remains MMIO-only.
+
+After each exit, the lifecycle loop checks `uart.pending_irq()` and updates the in-kernel IRQ chip via `KVM_IRQ_LINE` on transitions, so the 8250 driver's interrupt-driven TX/RX paths work (kernel printk uses a poll path that's IRQ-independent, but user-space writes via the tty layer require IRQs).
 
 ### 3.3 Boot → lifecycle handoff
 
 `boot` does not run the vCPU. Its outputs are:
-- A populated `GuestMem` (kernel image + initramfs + initial page tables + `boot_params`).
-- A `RegState { rip, rsp, cr3, ... }` value describing the initial vCPU register state per the Linux 64-bit boot protocol.
+- A populated `GuestMem` containing kernel image + initramfs + initial page tables + `boot_params` + a minimal MP table at EBDA (0x9FC00). Without the MP table, x86_64 kernels fall back to "No local APIC present" because they discover the LAPIC via MP/MADT rather than the architectural default address; without LAPIC, timer interrupts don't route and the scheduler stalls. The MP table is static data (FP + config header + 1 CPU + 1 ISA bus + 1 IOAPIC entry, ~96 bytes), not device emulation, so it lives in `boot` next to e820 and `boot_params`.
+- A `RegState { rip, rsp, cr3, sregs.apic_base, ... }` value describing the initial vCPU register state per the Linux 64-bit boot protocol. `apic_base` is set to `0xFEE0_0900` (xAPIC enabled, BSP); leaving it zero would disable the in-kernel LAPIC because `KVM_SET_SREGS` writes the APIC base MSR unconditionally.
 
 `lifecycle` applies the register state via `kvm` and starts the run loop. This keeps `boot` free of any KVM dependency.
 

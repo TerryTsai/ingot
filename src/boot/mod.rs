@@ -6,12 +6,14 @@ mod boot_params;
 mod elf_loader;
 mod gdt;
 mod initramfs;
+mod mp_table;
 mod page_tables;
 mod vcpu_primer;
 
 pub use boot_params::BootParams;
 pub(crate) use elf_loader::ElfLoader;
 pub use initramfs::Initramfs;
+pub(crate) use mp_table::MpTable;
 pub(crate) use vcpu_primer::VcpuPrimer;
 
 pub struct Kernel {
