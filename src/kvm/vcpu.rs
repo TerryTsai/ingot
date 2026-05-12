@@ -1,6 +1,6 @@
 //! Handle to a KVM vCPU. Wraps the per-vCPU file descriptor and the
 //! mmap'd kvm_run structure used to exchange entry/exit state.
-//! `VcpuExit` is the typed return shape of `VcpuFd::run` — produced
+//! `VcpuExit` is the typed return shape of `Vcpu::run` — produced
 //! only here, lives next to its producer.
 
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
@@ -67,14 +67,14 @@ impl VcpuExit {
     }
 }
 
-pub(crate) struct VcpuFd {
+pub(crate) struct Vcpu {
     fd: OwnedFd,
     id: u32,
     run_ptr: *mut kvm_run,
     mmap_size: usize,
 }
 
-impl VcpuFd {
+impl Vcpu {
     pub(super) fn create(vm_fd: RawFd, id: u32, mmap_size: usize) -> Result<Self, KvmError> {
         let raw = KvmError::check_ioctl(
             unsafe { libc::ioctl(vm_fd, KVM_CREATE_VCPU, id as libc::c_ulong) },
@@ -94,7 +94,7 @@ impl VcpuFd {
         if p == libc::MAP_FAILED {
             return Err(KvmError::Mmap(KvmError::last_errno()));
         }
-        Ok(VcpuFd { fd, id, run_ptr: p as *mut kvm_run, mmap_size })
+        Ok(Vcpu { fd, id, run_ptr: p as *mut kvm_run, mmap_size })
     }
 
     pub fn id(&self) -> u32 {
@@ -157,7 +157,7 @@ impl VcpuFd {
     }
 }
 
-impl Drop for VcpuFd {
+impl Drop for Vcpu {
     fn drop(&mut self) {
         unsafe { libc::munmap(self.run_ptr as _, self.mmap_size); }
     }
@@ -165,11 +165,11 @@ impl Drop for VcpuFd {
 
 #[cfg(test)]
 mod tests {
-    use crate::kvm::KvmFd;
+    use crate::kvm::Kvm;
 
     #[test]
     fn gets_and_sets_regs() {
-        let Some(kvm) = KvmFd::open_or_skip("gets_and_sets_regs") else { return; };
+        let Some(kvm) = Kvm::open_or_skip("gets_and_sets_regs") else { return; };
         let vm = kvm.create_vm().expect("create_vm");
         let vcpu = vm.create_vcpu(0).expect("create_vcpu");
         let mut regs = vcpu.get_regs().expect("get_regs");
@@ -181,7 +181,7 @@ mod tests {
 
     #[test]
     fn gets_and_sets_sregs() {
-        let Some(kvm) = KvmFd::open_or_skip("gets_and_sets_sregs") else { return; };
+        let Some(kvm) = Kvm::open_or_skip("gets_and_sets_sregs") else { return; };
         let vm = kvm.create_vm().expect("create_vm");
         let vcpu = vm.create_vcpu(0).expect("create_vcpu");
         let mut sregs = vcpu.get_sregs().expect("get_sregs");
@@ -199,7 +199,7 @@ mod tests {
         const PAGE_SIZE: usize = 4096;
         const CODE_GUEST_PHYS: u64 = 0x1000;
 
-        let Some(kvm) = KvmFd::open_or_skip("real_mode_hlt") else { return; };
+        let Some(kvm) = Kvm::open_or_skip("real_mode_hlt") else { return; };
         let vm = kvm.create_vm().expect("create_vm");
 
         let page = unsafe {

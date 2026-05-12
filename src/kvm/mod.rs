@@ -1,19 +1,24 @@
-//! KVM ioctl wrappers. The three Fd primitives (`KvmFd`, `VmFd`,
-//! `VcpuFd`) own their respective KVM file descriptors and expose the
-//! minimum surface the orchestrator needs. The hierarchy mirrors the
-//! kernel's: KvmFd opens /dev/kvm and creates VmFds; each VmFd creates
-//! VcpuFds; each VcpuFd runs the guest until a `VcpuExit`.
+//! KVM ioctl wrappers. Three primitives — `Kvm`, `Vm`, `Vcpu` —
+//! each owning the corresponding kernel object's file descriptor. The
+//! hierarchy mirrors the kernel's: `Kvm` opens `/dev/kvm` and creates
+//! `Vm`s; each `Vm` creates `Vcpu`s; each `Vcpu` runs the guest until
+//! a `VcpuExit`. The fd is an internal detail of each type; the type
+//! name reflects the kernel object it represents.
 
 mod cpuid;
 mod error;
 mod ioctls;
-mod kvm_fd;
-mod vcpu_fd;
-mod vm_fd;
+// `kvm::Kvm` is the principal handle; per the layout rule (file name =
+// snake_case of struct), it lives in `kvm.rs`. The resulting `kvm/kvm`
+// path triggers clippy's module_inception lint, which we suppress —
+// the convention here is intentional.
+#[allow(clippy::module_inception)]
+mod kvm;
+mod vcpu;
+mod vm;
 
 pub(crate) use cpuid::Cpuid;
 pub use error::KvmError;
-pub(crate) use kvm_fd::KvmFd;
-pub(crate) use vcpu_fd::VcpuExit;
-pub(crate) use vcpu_fd::VcpuFd;
-pub(crate) use vm_fd::VmFd;
+pub(crate) use kvm::Kvm;
+pub(crate) use vcpu::{Vcpu, VcpuExit};
+pub(crate) use vm::Vm;

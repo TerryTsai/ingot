@@ -11,7 +11,7 @@
 //!     kernel.rs    Kernel owns parsed ELF segments; write_to places.
 //!     initramfs.rs Initramfs owns file bytes; write_to places.
 //!   bringup.rs     Phase-2 byte assembly — free function `write`.
-//!   registers.rs   Registers value type + apply_to(VcpuFd).
+//!   registers.rs   Registers value type + apply_to(Vcpu).
 //!   mod.rs         `boot::install` — the verb that composes them all.
 
 mod asm;

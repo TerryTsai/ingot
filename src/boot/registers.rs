@@ -1,11 +1,11 @@
 //! vCPU register state — the kvm_regs + kvm_sregs pair that enters
 //! the kernel in long mode at its ELF entry. `Registers` IS the
 //! value type (replaces the old `RegState` placeholder in `kvm/`);
-//! `for_kernel(entry)` composes one and `apply_to(&VcpuFd)` writes it.
+//! `for_kernel(entry)` composes one and `apply_to(&Vcpu)` writes it.
 
 use kvm_bindings::{kvm_regs, kvm_segment, kvm_sregs};
 
-use crate::kvm::{KvmError, VcpuFd};
+use crate::kvm::{KvmError, Vcpu};
 
 use super::layout::{BOOT_PARAMS_ADDR, GDT_ADDR, PML4_ADDR};
 
@@ -61,7 +61,7 @@ impl Registers {
     }
 
     /// Write `regs` then `sregs` to the vCPU.
-    pub fn apply_to(&self, vcpu: &VcpuFd) -> Result<(), KvmError> {
+    pub fn apply_to(&self, vcpu: &Vcpu) -> Result<(), KvmError> {
         vcpu.set_sregs(&self.sregs)?;
         vcpu.set_regs(&self.regs)?;
         Ok(())

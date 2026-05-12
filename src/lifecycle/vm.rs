@@ -19,7 +19,7 @@ use crate::boot::{self, TSS_ADDR};
 use crate::lifecycle::config::{Config, StdoutSink};
 use crate::devices::{Block, Bus, Cmos, Net, Tap, Uart, UartInput, Vsock, COM1_BASE, COM1_SIZE};
 use crate::lifecycle::error::{HostError, IngotError};
-use crate::kvm::{Cpuid, KvmError, KvmFd, VcpuExit, VcpuFd, VmFd};
+use crate::kvm::{self, Cpuid, KvmError, VcpuExit, Vcpu};
 use crate::lifecycle::memory::Memory;
 use crate::lifecycle::outcome::{ExitStatus, GuestFaultReason, Outcome, Telemetry, TransitionEvent};
 use crate::lifecycle::state::State;
@@ -50,12 +50,12 @@ pub struct Vm {
     state: State,
     telemetry: Telemetry,
     bus: Bus,
-    vcpus: Vec<VcpuFd>,
-    vm_fd: VmFd,
+    vcpus: Vec<Vcpu>,
+    kvm_vm: kvm::Vm,
     mem: Memory,
     captured_stdout: Captured,
     first_output: FirstOutput,
-    _kvm: KvmFd,
+    _kvm: kvm::Kvm,
 }
 
 impl Vm {
@@ -82,15 +82,15 @@ impl Vm {
     /// ```
     pub fn new(config: Config) -> Result<Self, IngotError> {
         Self::validate(&config)?;
-        let kvm = KvmFd::open()?;
-        let vm_fd = kvm.create_vm()?;
+        let kvm = kvm::Kvm::open()?;
+        let kvm_vm = kvm.create_vm()?;
         let mem = Memory::new(config.memory_bytes)?;
-        vm_fd.set_user_memory_region(0, 0, mem.host_ptr(), config.memory_bytes)?;
-        vm_fd.set_tss_addr(TSS_ADDR)?;
-        vm_fd.create_irqchip()?;
-        vm_fd.create_pit2()?;
+        kvm_vm.set_user_memory_region(0, 0, mem.host_ptr(), config.memory_bytes)?;
+        kvm_vm.set_tss_addr(TSS_ADDR)?;
+        kvm_vm.create_irqchip()?;
+        kvm_vm.create_pit2()?;
         let cpuid = kvm.supported_cpuid()?;
-        let vcpus = Self::make_vcpus(&vm_fd, config.vcpus, &cpuid)?;
+        let vcpus = Self::make_vcpus(&kvm_vm, config.vcpus, &cpuid)?;
         let (uart, captured_stdout, first_output) = Self::make_uart(&config)?;
         let mut bus = Bus::new();
         bus.register_pio(COM1_BASE, COM1_SIZE, Box::new(uart))?;
@@ -110,7 +110,7 @@ impl Vm {
             state: State::Configured,
             bus,
             vcpus,
-            vm_fd,
+            kvm_vm,
             mem,
             captured_stdout,
             first_output,
@@ -183,10 +183,10 @@ impl Vm {
     fn reconcile_bus_irqs(&mut self, asserted: &mut Vec<u32>) -> Result<(), IngotError> {
         let pending: Vec<u32> = self.bus.pending_interrupts().into_iter().map(|i| i.gsi).collect();
         for gsi in asserted.iter() {
-            if !pending.contains(gsi) { self.vm_fd.set_irq_line(*gsi, 0)?; }
+            if !pending.contains(gsi) { self.kvm_vm.set_irq_line(*gsi, 0)?; }
         }
         for gsi in &pending {
-            if !asserted.contains(gsi) { self.vm_fd.set_irq_line(*gsi, 1)?; }
+            if !asserted.contains(gsi) { self.kvm_vm.set_irq_line(*gsi, 1)?; }
         }
         *asserted = pending;
         Ok(())
@@ -241,7 +241,7 @@ impl Vm {
         Ok(())
     }
 
-    fn make_vcpus(vm: &VmFd, count: u8, cpuid: &Cpuid) -> Result<Vec<VcpuFd>, IngotError> {
+    fn make_vcpus(vm: &kvm::Vm, count: u8, cpuid: &Cpuid) -> Result<Vec<Vcpu>, IngotError> {
         let mut v = Vec::with_capacity(count as usize);
         for i in 0..count {
             let vcpu = vm.create_vcpu(i as u32)?;
@@ -323,7 +323,7 @@ impl Vm {
 
     /// Install a no-op SIGALRM handler and arm setitimer at 5ms intervals.
     /// SIGALRM with no SA_RESTART forces `KVM_RUN` to return `-EINTR`, which
-    /// `VcpuFd::run` turns into `VcpuExit::Intr`. The run loop then drives
+    /// `Vcpu::run` turns into `VcpuExit::Intr`. The run loop then drives
     /// `poll_io` (TAP RX, etc.) before re-entering `KVM_RUN`. Without this,
     /// a guest in `hlt` would never let the host drain its TAP fd because
     /// nothing else generates a vCPU exit.

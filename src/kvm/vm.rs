@@ -6,17 +6,17 @@ use std::os::fd::{AsRawFd, OwnedFd};
 use kvm_bindings::kvm_userspace_memory_region;
 
 use super::ioctls::*;
-use super::vcpu_fd::VcpuFd;
+use super::vcpu::Vcpu;
 use super::KvmError;
 
-pub(crate) struct VmFd {
+pub(crate) struct Vm {
     fd: OwnedFd,
     vcpu_mmap_size: usize,
 }
 
-impl VmFd {
+impl Vm {
     pub(super) fn new(fd: OwnedFd, vcpu_mmap_size: usize) -> Self {
-        VmFd { fd, vcpu_mmap_size }
+        Vm { fd, vcpu_mmap_size }
     }
 
     /// Sets the physical base address of KVM's 3-page TSS region. Required on
@@ -73,8 +73,8 @@ impl VmFd {
         Ok(())
     }
 
-    pub fn create_vcpu(&self, id: u32) -> Result<VcpuFd, KvmError> {
-        VcpuFd::create(self.fd.as_raw_fd(), id, self.vcpu_mmap_size)
+    pub fn create_vcpu(&self, id: u32) -> Result<Vcpu, KvmError> {
+        Vcpu::create(self.fd.as_raw_fd(), id, self.vcpu_mmap_size)
     }
 
     /// Set GSI line `irq` to `level` (1 = asserted, 0 = deasserted) on the
@@ -92,11 +92,11 @@ impl VmFd {
 
 #[cfg(test)]
 mod tests {
-    use crate::kvm::KvmFd;
+    use crate::kvm::Kvm;
 
     #[test]
     fn creates_vcpu() {
-        let Some(kvm) = KvmFd::open_or_skip("creates_vcpu") else { return; };
+        let Some(kvm) = Kvm::open_or_skip("creates_vcpu") else { return; };
         let vm = kvm.create_vm().expect("create_vm");
         let vcpu = vm.create_vcpu(0).expect("create_vcpu");
         assert_eq!(vcpu.id(), 0);
@@ -104,7 +104,7 @@ mod tests {
 
     #[test]
     fn creates_irqchip() {
-        let Some(kvm) = KvmFd::open_or_skip("creates_irqchip") else { return; };
+        let Some(kvm) = Kvm::open_or_skip("creates_irqchip") else { return; };
         let vm = kvm.create_vm().expect("create_vm");
         vm.create_irqchip().expect("create_irqchip");
     }
