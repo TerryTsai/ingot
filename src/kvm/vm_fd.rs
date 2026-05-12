@@ -92,11 +92,11 @@ impl VmFd {
 
 #[cfg(test)]
 mod tests {
-    use crate::kvm::test_helpers::open_or_skip;
+    use crate::kvm::KvmFd;
 
     #[test]
     fn creates_vcpu() {
-        let Some(kvm) = open_or_skip("creates_vcpu") else { return; };
+        let Some(kvm) = KvmFd::open_or_skip("creates_vcpu") else { return; };
         let vm = kvm.create_vm().expect("create_vm");
         let vcpu = vm.create_vcpu(0).expect("create_vcpu");
         assert_eq!(vcpu.id(), 0);
@@ -104,7 +104,7 @@ mod tests {
 
     #[test]
     fn creates_irqchip() {
-        let Some(kvm) = open_or_skip("creates_irqchip") else { return; };
+        let Some(kvm) = KvmFd::open_or_skip("creates_irqchip") else { return; };
         let vm = kvm.create_vm().expect("create_vm");
         vm.create_irqchip().expect("create_irqchip");
     }

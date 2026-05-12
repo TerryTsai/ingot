@@ -7,7 +7,7 @@ use kvm_bindings::{kvm_regs, kvm_run, kvm_sregs};
 
 use super::cpuid::Cpuid;
 use super::ioctls::*;
-use super::vcpu_exit::{decode_exit, VcpuExit};
+use super::vcpu_exit::VcpuExit;
 use super::KvmError;
 
 pub(crate) struct VcpuFd {
@@ -81,7 +81,7 @@ impl VcpuFd {
             if e == libc::EINTR { return Ok(VcpuExit::Intr); }
             return Err(KvmError::Ioctl { name: "KVM_RUN", errno: e });
         }
-        Ok(decode_exit(unsafe { &*self.run_ptr }, self.run_ptr))
+        Ok(VcpuExit::from_kvm_run(unsafe { &*self.run_ptr }, self.run_ptr))
     }
 
     pub fn set_mmio_read_data(&mut self, data: &[u8]) {
@@ -108,11 +108,11 @@ impl Drop for VcpuFd {
 
 #[cfg(test)]
 mod tests {
-    use crate::kvm::test_helpers::open_or_skip;
+    use crate::kvm::KvmFd;
 
     #[test]
     fn gets_and_sets_regs() {
-        let Some(kvm) = open_or_skip("gets_and_sets_regs") else { return; };
+        let Some(kvm) = KvmFd::open_or_skip("gets_and_sets_regs") else { return; };
         let vm = kvm.create_vm().expect("create_vm");
         let vcpu = vm.create_vcpu(0).expect("create_vcpu");
         let mut regs = vcpu.get_regs().expect("get_regs");
@@ -124,7 +124,7 @@ mod tests {
 
     #[test]
     fn gets_and_sets_sregs() {
-        let Some(kvm) = open_or_skip("gets_and_sets_sregs") else { return; };
+        let Some(kvm) = KvmFd::open_or_skip("gets_and_sets_sregs") else { return; };
         let vm = kvm.create_vm().expect("create_vm");
         let vcpu = vm.create_vcpu(0).expect("create_vcpu");
         let mut sregs = vcpu.get_sregs().expect("get_sregs");
@@ -142,7 +142,7 @@ mod tests {
         const PAGE_SIZE: usize = 4096;
         const CODE_GUEST_PHYS: u64 = 0x1000;
 
-        let Some(kvm) = open_or_skip("real_mode_hlt") else { return; };
+        let Some(kvm) = KvmFd::open_or_skip("real_mode_hlt") else { return; };
         let vm = kvm.create_vm().expect("create_vm");
 
         let page = unsafe {

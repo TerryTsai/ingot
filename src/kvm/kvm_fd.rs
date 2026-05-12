@@ -55,20 +55,35 @@ impl KvmFd {
         )?;
         Ok(buf)
     }
+
+    /// Test-only: try to open `/dev/kvm`, return `None` and log a skip
+    /// message if unavailable. Shared by every test that needs a real
+    /// KVM handle — keeps the test suite passing in environments
+    /// without KVM (CI sandboxes, containers without device passthrough).
+    #[cfg(test)]
+    pub(crate) fn open_or_skip(test_name: &str) -> Option<Self> {
+        match Self::open() {
+            Ok(k) => Some(k),
+            Err(e) => {
+                eprintln!("[{}] skipped: cannot open /dev/kvm ({:?})", test_name, e);
+                None
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::kvm::test_helpers::open_or_skip;
+    use super::*;
 
     #[test]
     fn opens_dev_kvm() {
-        let Some(_) = open_or_skip("opens_dev_kvm") else { return; };
+        let Some(_) = KvmFd::open_or_skip("opens_dev_kvm") else { return; };
     }
 
     #[test]
     fn creates_vm() {
-        let Some(kvm) = open_or_skip("creates_vm") else { return; };
+        let Some(kvm) = KvmFd::open_or_skip("creates_vm") else { return; };
         let _vm = kvm.create_vm().expect("create_vm");
     }
 }
