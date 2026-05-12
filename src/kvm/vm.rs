@@ -5,7 +5,7 @@ use std::os::fd::{AsRawFd, OwnedFd};
 
 use kvm_bindings::kvm_userspace_memory_region;
 
-use super::ioctls::*;
+use super::support::ioctls::*;
 use super::vcpu::Vcpu;
 use super::KvmError;
 

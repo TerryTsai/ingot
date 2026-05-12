@@ -9,8 +9,8 @@ use kvm_bindings::{
     kvm_regs, kvm_run, kvm_sregs, KVM_EXIT_HLT, KVM_EXIT_IO, KVM_EXIT_MMIO, KVM_EXIT_SHUTDOWN,
 };
 
-use super::cpuid::Cpuid;
-use super::ioctls::*;
+use super::support::cpuid::Cpuid;
+use super::support::ioctls::*;
 use super::KvmError;
 
 #[derive(Debug)]

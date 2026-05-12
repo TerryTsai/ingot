@@ -5,8 +5,8 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 
 use kvm_bindings::KVM_API_VERSION;
 
-use super::cpuid::Cpuid;
-use super::ioctls::*;
+use super::support::cpuid::Cpuid;
+use super::support::ioctls::*;
 use super::vm::Vm;
 use super::KvmError;
 
