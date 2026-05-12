@@ -25,4 +25,4 @@ pub use lifecycle::{
     BlockSpec, Config, ExitStatus, GuestFaultReason, HostError, IngotError, NetSpec, Outcome,
     State, StdoutSink, Telemetry, TransitionEvent, Vm, VsockSpec,
 };
-pub use jailer::Mode as SeccompMode;
+pub use jailer::{jail_and_exec, BindMount, JailConfig, Limits, Mode as SeccompMode};

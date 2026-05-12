@@ -4,7 +4,7 @@ This document is the deliverable required by [SPEC.md §5.4](../SPEC.md). It enu
 
 ## 0. Status
 
-Reflects committed code through Phase 4. Phase 5 (virtio-vsock) and Phase 7 (jailer) each add or modify a boundary; this document is updated in the same change as the code.
+Reflects committed code through Phase 7 (jailer end-to-end). Phase 5 (virtio-vsock) and Phase 7 (jailer) each added or modified a boundary; this document is updated in the same change as the code.
 
 ## 1. Boundaries
 
@@ -53,13 +53,25 @@ Four boundaries, each with its own contract. SPEC §3.3 is authoritative for the
 
 **Threats:**
 - VMM is exploited via a virtio bug and tries to `unlinkat`, `execve`, `socket(AF_UNIX)`, etc. *Mitigation (in-process):* seccomp BPF filter installed via `--seccomp strict` (or programmatically via `install_seccomp(Mode::Strict)`). Source of truth is the `ALLOW` constant in `src/seccomp.rs`; current list is `ioctl, read, write, pread64, pwrite64, mmap, munmap, mprotect, brk, madvise, futex, clock_gettime, clock_nanosleep, nanosleep, restart_syscall, rt_sig*, setitimer, sigaltstack, close, fcntl, exit, exit_group, gettid, getpid, writev, lseek, fstat, statx, newfstatat, openat, getrandom, poll, ppoll, sched_yield`. Adding a syscall requires updating that array — each line carries the justification comment.
-- VMM holds privileges it doesn't need. *Mitigation (Phase 7 jailer, not yet implemented):* drop everything but `CAP_NET_ADMIN` (only required briefly during TAP setup, then dropped) before `execve`'ing the VMM binary.
+- VMM holds privileges it doesn't need. *Mitigation:* the `ingot-jailer` binary (§1.4) drops UID/GID before `execve`'ing the VMM. Production deployments should pass `--supp-groups []` and use privileged-fd passing for /dev/kvm and /dev/net/tun; test deployments pass the `kvm` GID to retain device access.
 
 ### 1.4 Jailer ↔ host
 
-**Contract:** the jailer runs with elevated privileges briefly to set up isolation primitives, then drops privileges and `execve`s the VMM binary.
+**Contract:** the jailer runs with elevated privileges briefly to set up isolation primitives, then drops privileges and `execve`s the VMM binary. The VMM inherits four layers of isolation: cgroup limits, mount namespace, network namespace, PID namespace, plus an in-process seccomp filter it installs on itself before entering the run loop.
 
-**Partially implemented.** The in-process seccomp filter (§1.3) is the syscall half of the jailer's job; the namespaces / cgroups / privilege-drop half lives in the not-yet-built `ingot-jailer` binary. Until that exists, deploy the VMM under whatever isolation the operator's existing infrastructure provides (systemd `--user`, podman `--isolation`, etc.).
+**Implementation:** `src/bin/ingot-jailer.rs` orchestrates four primitives in `src/jailer/`:
+- `cgroups.rs` creates a cgroup v2 directory under `/sys/fs/cgroup/<name>`, writes `memory.max`, `pids.max`, `cpu.weight`, and adds the current PID to `cgroup.procs`.
+- `namespaces.rs` calls `unshare(CLONE_NEWNS | CLONE_NEWPID | CLONE_NEWNET | CLONE_NEWIPC)` then forks. The child inherits all four namespaces and runs as PID 1 in the new PID namespace; the parent waits for the child and exits with its status.
+- `mount.rs` (run by the child) marks root recursively private, bind-mounts each declared `--bind src[:dst]` into the new root, mounts `/proc` (now reflecting the new PID namespace), then `pivot_root` and `umount2(oldroot, MNT_DETACH)`. The host file tree is unreachable after this.
+- `privilege.rs` (run by the child, last) sets supplementary groups, `setresgid`, `setresuid`, then `PR_SET_NO_NEW_PRIVS`. Any future `execve` cannot regain privileges.
+
+**Containment verified by `scripts/jailer-test.sh`:**
+- bind-mount list is minimal — `/etc/passwd` is not visible inside the jail.
+- network namespace is fresh — no host interfaces present.
+- `/proc` is accessible and mounted with the new PID namespace.
+- the cgroup is created and `memory.max` is written.
+
+**Remaining work for fully unprivileged deployment** (not done; not blocking Phase 7 done criterion): privileged-fd passing for /dev/kvm and /dev/net/tun so the jailer can drop all supplementary groups. Today the jailer passes the kvm GID through to retain access; production deployments wanting stricter drop need fd inheritance plumbing through to `Vm::new`.
 
 ## 2. Validation philosophy
 
