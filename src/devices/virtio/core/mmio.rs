@@ -33,6 +33,10 @@ pub(crate) struct VirtioMmio {
     driver_feat: u64,
     driver_feat_sel: u32,
     queue_sel: u32,
+    /// Queue index from the last `QueueNotify` write, cleared by
+    /// `take_pending_kick`. Lets `write_reg` stay a pure state-update
+    /// verb; callers check kicks via the dedicated method.
+    pending_kick: Option<u32>,
 }
 
 impl VirtioMmio {
@@ -42,6 +46,7 @@ impl VirtioMmio {
             status: 0, interrupt_status: 0, config_generation: 0,
             queues: (0..num_queues).map(|_| VirtioQueue::new()).collect(),
             device_feat_sel: 0, driver_feat: 0, driver_feat_sel: 0, queue_sel: 0,
+            pending_kick: None,
         }
     }
 
@@ -61,9 +66,10 @@ impl VirtioMmio {
         }
     }
 
-    /// Returns `Some(queue_index)` when the write was a notify kick the
-    /// device layer must service; otherwise `None`.
-    pub fn write_reg(&mut self, offset: u64, val: u32) -> Option<u32> {
+    /// Update internal register state. A `QueueNotify` write records a
+    /// pending kick that the caller must read via `take_pending_kick`
+    /// before deciding which queue to drain.
+    pub fn write_reg(&mut self, offset: u64, val: u32) {
         match offset {
             0x014 => self.device_feat_sel = val,
             0x020 => self.write_driver_feat(val),
@@ -71,7 +77,7 @@ impl VirtioMmio {
             0x030 => self.queue_sel = val,
             0x038 => { if let Some(q) = self.cur_q_mut() { q.num = val; } }
             0x044 => { if let Some(q) = self.cur_q_mut() { q.ready = val; } }
-            0x050 => return Some(val),
+            0x050 => self.pending_kick = Some(val),
             0x064 => self.interrupt_status &= !val,
             0x070 => self.status = val,
             0x080 => { if let Some(q) = self.cur_q_mut() { q.set_desc_lo(val); } }
@@ -82,7 +88,13 @@ impl VirtioMmio {
             0x0a4 => { if let Some(q) = self.cur_q_mut() { q.set_used_hi(val); } }
             _ => {}
         }
-        None
+    }
+
+    /// Return and clear the most recent `QueueNotify` queue index, if
+    /// one is pending. Devices call this after `write_reg` to decide
+    /// whether the driver kicked a queue.
+    pub fn take_pending_kick(&mut self) -> Option<u32> {
+        self.pending_kick.take()
     }
 
     fn feature_slice(&self, sel: u32, features: u64) -> u32 {
@@ -135,10 +147,18 @@ mod tests {
     }
 
     #[test]
-    fn queue_notify_returns_queue_index() {
+    fn queue_notify_sets_pending_kick_taken_once() {
         let mut m = new();
-        assert_eq!(m.write_reg(0x050, 1), Some(1));
-        assert_eq!(m.write_reg(0x070, 0xFF), None);
+        m.write_reg(0x050, 1);
+        assert_eq!(m.take_pending_kick(), Some(1));
+        assert_eq!(m.take_pending_kick(), None, "take clears");
+    }
+
+    #[test]
+    fn non_notify_writes_do_not_set_pending_kick() {
+        let mut m = new();
+        m.write_reg(0x070, 0xFF);  // status write, not a kick
+        assert_eq!(m.take_pending_kick(), None);
     }
 
     #[test]

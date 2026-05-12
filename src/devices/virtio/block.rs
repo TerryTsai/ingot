@@ -151,7 +151,8 @@ impl MmioDevice for Block {
         if offset >= CONFIG_BASE { return Ok(()); }
         if data.len() != 4 { return Err(GuestError::MmioOutOfRange { addr: offset }); }
         let v = u32::from_le_bytes(data.try_into().unwrap());
-        if self.mmio.write_reg(offset, v).is_some() { self.process_requests(mem)?; }
+        self.mmio.write_reg(offset, v);
+        if self.mmio.take_pending_kick().is_some() { self.process_requests(mem)?; }
         Ok(())
     }
 

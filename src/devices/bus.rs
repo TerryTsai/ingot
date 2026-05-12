@@ -7,7 +7,14 @@
 use crate::lifecycle::error::HostError;
 use crate::lifecycle::memory::Memory;
 
-use super::{GuestError, Interrupt};
+use super::GuestError;
+
+/// A device-raised IRQ. Devices return one from `pending_interrupt`;
+/// the bus collects them and `Vm` reconciles transitions against the
+/// in-kernel IRQ chip.
+pub(crate) struct Interrupt {
+    pub gsi: u32,
+}
 
 /// Memory-mapped device contract. Implementors are reachable through the
 /// bus's MMIO table at some `(base, size)` range; reads/writes arrive as

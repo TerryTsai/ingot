@@ -22,26 +22,14 @@
 
 mod bus;
 mod cmos;
+mod error;
 mod host;
 mod uart;
 mod virtio;
 
-pub(crate) use bus::{Bus, MmioDevice};
+pub(crate) use bus::{Bus, Interrupt, MmioDevice};
 pub(crate) use cmos::Cmos;
+pub use error::GuestError;
 pub(crate) use host::Tap;
 pub(crate) use uart::{Uart, UartInput, COM1_BASE, COM1_SIZE};
 pub(crate) use virtio::{Block, Net, Vsock};
-
-pub(crate) struct Interrupt {
-    pub gsi: u32,
-}
-
-#[derive(Debug)]
-pub enum GuestError {
-    MalformedDescriptor,
-    DescriptorOutOfBounds,
-    DescriptorChainCycle,
-    MmioOutOfRange { addr: u64 },
-    UnexpectedPio { port: u16 },
-    InvalidGuestPhys { addr: u64, len: usize },
-}

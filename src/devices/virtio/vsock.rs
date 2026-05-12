@@ -118,7 +118,8 @@ impl MmioDevice for Vsock {
         if offset >= CONFIG_BASE { return Ok(()); }
         if data.len() != 4 { return Err(GuestError::MmioOutOfRange { addr: offset }); }
         let v = u32::from_le_bytes(data.try_into().unwrap());
-        if let Some(q) = self.mmio.write_reg(offset, v) {
+        self.mmio.write_reg(offset, v);
+        if let Some(q) = self.mmio.take_pending_kick() {
             if (q as usize) < NUM_QUEUES { self.kick(q as usize); }
         }
         if offset == REG_QUEUE_READY || offset == REG_STATUS { self.maybe_start()?; }
