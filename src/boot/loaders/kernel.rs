@@ -1,9 +1,9 @@
-//! Linux x86_64 ELF kernel loader. Reads the file at `path`, parses
-//! the ELF header + each program header, and copies every PT_LOAD
-//! segment to its declared `p_paddr` in guest memory. Returns a
-//! `Kernel` record with the entry point and the highest end address
-//! across all loaded segments — the orchestrator uses `end` to place
-//! the initramfs right after the kernel image.
+//! Linux x86_64 ELF kernel loader. `Kernel::from_path` reads the file
+//! and parses every PT_LOAD program header into a `Segment` record —
+//! it does NOT touch guest memory. A later `write_to(&mut Memory)`
+//! copies each segment to its declared `p_paddr`. The parse/place
+//! split lets callers inspect `entry()` / `end()` before deciding
+//! how to lay out things downstream of the kernel image.
 
 use std::path::Path;
 
@@ -21,28 +21,50 @@ const EHDR_SIZE: usize = 64;
 const PHDR_SIZE: usize = 56;
 
 pub(crate) struct Kernel {
-    pub entry: u64,
-    pub end: u64,
+    entry: u64,
+    segments: Vec<Segment>,
+}
+
+struct Segment {
+    paddr: u64,
+    bytes: Vec<u8>,
+    memsz: u64,
 }
 
 impl Kernel {
-    pub fn load(mem: &mut Memory, path: &Path) -> Result<Self, HostError> {
-        let bytes = std::fs::read(path)
+    /// Read the ELF at `path` and parse every PT_LOAD segment into an
+    /// owned `Vec<u8>`. No guest memory is touched here.
+    pub fn from_path(path: &Path) -> Result<Self, HostError> {
+        let image = std::fs::read(path)
             .map_err(|_| HostError::KernelImageNotReadable(path.to_path_buf()))?;
-        Self::validate_header(&bytes)?;
-        let (entry, e_phoff, e_phnum) = Self::header_fields(&bytes);
-        let mut end = 0u64;
+        Self::validate_header(&image)?;
+        let (entry, e_phoff, e_phnum) = Self::header_fields(&image);
+        let mut segments = Vec::new();
         for i in 0..e_phnum {
-            let phdr = Self::parse_phdr(&bytes, e_phoff + i * PHDR_SIZE)?;
+            let phdr = Self::parse_phdr(&image, e_phoff + i * PHDR_SIZE)?;
             if phdr.p_type != PT_LOAD { continue; }
-            if phdr.p_offset + phdr.p_filesz > bytes.len() {
+            if phdr.p_offset + phdr.p_filesz > image.len() {
                 return Err(HostError::InvalidConfig("ELF: PT_LOAD past file end"));
             }
-            mem.write(phdr.p_paddr, &bytes[phdr.p_offset..phdr.p_offset + phdr.p_filesz])
-                .map_err(|_| HostError::InvalidConfig("kernel segment write failed"))?;
-            end = end.max(phdr.p_paddr + phdr.p_memsz);
+            let bytes = image[phdr.p_offset..phdr.p_offset + phdr.p_filesz].to_vec();
+            segments.push(Segment { paddr: phdr.p_paddr, bytes, memsz: phdr.p_memsz });
         }
-        Ok(Kernel { entry, end })
+        Ok(Kernel { entry, segments })
+    }
+
+    pub fn entry(&self) -> u64 { self.entry }
+
+    pub fn end(&self) -> u64 {
+        self.segments.iter().map(|s| s.paddr + s.memsz).max().unwrap_or(0)
+    }
+
+    /// Copy each parsed segment to its `p_paddr` in guest memory.
+    pub fn write_to(&self, mem: &mut Memory) -> Result<(), HostError> {
+        for s in &self.segments {
+            mem.write(s.paddr, &s.bytes)
+                .map_err(|_| HostError::InvalidConfig("kernel segment write failed"))?;
+        }
+        Ok(())
     }
 
     fn validate_header(image: &[u8]) -> Result<(), HostError> {
@@ -115,82 +137,69 @@ mod tests {
         b
     }
 
-    fn write_temp_elf(name: &str, payload: &[u8], memsz: u64) -> std::path::PathBuf {
+    fn write_file(name: &str, bytes: &[u8]) -> std::path::PathBuf {
         let mut p = std::env::temp_dir();
-        p.push(format!("ingot-kernel-load-{}-{}", name, std::process::id()));
-        std::fs::write(&p, synth_elf(ENTRY, payload, memsz)).unwrap();
-        p
-    }
-
-    fn write_raw_elf(name: &str, bytes: &[u8]) -> std::path::PathBuf {
-        let mut p = std::env::temp_dir();
-        p.push(format!("ingot-kernel-load-{}-{}", name, std::process::id()));
+        p.push(format!("ingot-kernel-{}-{}", name, std::process::id()));
         std::fs::write(&p, bytes).unwrap();
         p
     }
 
     #[test]
-    fn loads_minimal_elf_returning_entry_and_end() {
-        let mut mem = Memory::new(MEM_SIZE).unwrap();
-        let path = write_temp_elf("min", &[0xf4], 16);
-        let k = Kernel::load(&mut mem, &path).unwrap();
+    fn from_path_parses_entry_and_end_without_touching_memory() {
+        let path = write_file("entry", &synth_elf(ENTRY, &[0xf4], 16));
+        let kernel = Kernel::from_path(&path).unwrap();
         let _ = std::fs::remove_file(&path);
-        assert_eq!(k.entry, ENTRY);
-        assert_eq!(k.end, ENTRY + 16);
+        assert_eq!(kernel.entry(), ENTRY);
+        assert_eq!(kernel.end(), ENTRY + 16);
+        assert_eq!(kernel.segments.len(), 1);
+    }
+
+    #[test]
+    fn write_to_places_segments() {
+        let path = write_file("write", &synth_elf(ENTRY, &[0xf4], 1));
+        let kernel = Kernel::from_path(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        let mut mem = Memory::new(MEM_SIZE).unwrap();
+        kernel.write_to(&mut mem).unwrap();
         let mut buf = [0u8; 1];
         mem.read(ENTRY, &mut buf).unwrap();
         assert_eq!(buf[0], 0xf4);
     }
 
     #[test]
-    fn rejects_truncated_header() {
-        let mut mem = Memory::new(MEM_SIZE).unwrap();
-        let path = write_raw_elf("trunc", &[0x7f, b'E', b'L', b'F']);
-        let r = Kernel::load(&mut mem, &path);
+    fn from_path_rejects_truncated_header() {
+        let path = write_file("trunc", &[0x7f, b'E', b'L', b'F']);
+        let r = Kernel::from_path(&path);
         let _ = std::fs::remove_file(&path);
         assert!(r.is_err());
     }
 
     #[test]
-    fn rejects_bad_magic() {
+    fn from_path_rejects_bad_magic() {
         let mut elf = synth_elf(ENTRY, &[0xf4], 1);
         elf[0] = 0x00;
-        let path = write_raw_elf("badmagic", &elf);
-        let mut mem = Memory::new(MEM_SIZE).unwrap();
-        let r = Kernel::load(&mut mem, &path);
+        let path = write_file("badmagic", &elf);
+        let r = Kernel::from_path(&path);
         let _ = std::fs::remove_file(&path);
         assert!(r.is_err());
     }
 
     #[test]
-    fn rejects_32bit_class() {
+    fn from_path_rejects_32bit_class() {
         let mut elf = synth_elf(ENTRY, &[0xf4], 1);
         elf[4] = 1;
-        let path = write_raw_elf("32bit", &elf);
-        let mut mem = Memory::new(MEM_SIZE).unwrap();
-        let r = Kernel::load(&mut mem, &path);
+        let path = write_file("32bit", &elf);
+        let r = Kernel::from_path(&path);
         let _ = std::fs::remove_file(&path);
         assert!(r.is_err());
     }
 
     #[test]
-    fn rejects_wrong_machine() {
+    fn from_path_rejects_wrong_machine() {
         let mut elf = synth_elf(ENTRY, &[0xf4], 1);
         elf[18..20].copy_from_slice(&3u16.to_le_bytes());
-        let path = write_raw_elf("wrongmach", &elf);
-        let mut mem = Memory::new(MEM_SIZE).unwrap();
-        let r = Kernel::load(&mut mem, &path);
-        let _ = std::fs::remove_file(&path);
-        assert!(r.is_err());
-    }
-
-    #[test]
-    fn rejects_segment_past_file_end() {
-        let elf = synth_elf(ENTRY, &[0xf4], 1);
-        let truncated = elf[..elf.len() - 1].to_vec();
-        let path = write_raw_elf("truncseg", &truncated);
-        let mut mem = Memory::new(MEM_SIZE).unwrap();
-        let r = Kernel::load(&mut mem, &path);
+        let path = write_file("wrongmach", &elf);
+        let r = Kernel::from_path(&path);
         let _ = std::fs::remove_file(&path);
         assert!(r.is_err());
     }

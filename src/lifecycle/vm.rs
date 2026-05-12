@@ -15,7 +15,7 @@ use std::os::fd::FromRawFd;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use crate::boot::{Image, TSS_ADDR};
+use crate::boot::{self, TSS_ADDR};
 use crate::lifecycle::config::{Config, StdoutSink};
 use crate::devices::{Block, Bus, Cmos, Net, Tap, Uart, UartInput, Vsock, COM1_BASE, COM1_SIZE};
 use crate::lifecycle::error::{HostError, IngotError};
@@ -144,16 +144,15 @@ impl Vm {
     }
 
     fn boot_kernel(&mut self) -> Result<(), IngotError> {
-        let state = Image::new(
+        let registers = boot::install(
             &mut self.mem,
             &self.config.kernel_path,
             self.config.initramfs_path.as_deref(),
             &self.config.cmdline,
             self.config.vcpus,
             self.config.memory_bytes,
-        ).install()?;
-        self.vcpus[0].set_sregs(&state.sregs)?;
-        self.vcpus[0].set_regs(&state.regs)?;
+        )?;
+        registers.apply_to(&self.vcpus[0])?;
         Ok(())
     }
 

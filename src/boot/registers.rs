@@ -1,13 +1,11 @@
-//! vCPU register-state composition. After `Image::install` has placed
-//! the kernel ELF and built the bringup tables in guest memory,
-//! `Registers::for_kernel` produces the `kvm_regs` + `kvm_sregs` pair
-//! that puts the CPU in long mode pointed at the kernel's entry,
-//! with paging on, the LAPIC enabled, and RSI carrying the boot_params
-//! address per the Linux 64-bit boot protocol.
+//! vCPU register state — the kvm_regs + kvm_sregs pair that enters
+//! the kernel in long mode at its ELF entry. `Registers` IS the
+//! value type (replaces the old `RegState` placeholder in `kvm/`);
+//! `for_kernel(entry)` composes one and `apply_to(&VcpuFd)` writes it.
 
 use kvm_bindings::{kvm_regs, kvm_segment, kvm_sregs};
 
-use crate::kvm::RegState;
+use crate::kvm::{KvmError, VcpuFd};
 
 use super::layout::{BOOT_PARAMS_ADDR, GDT_ADDR, PML4_ADDR};
 
@@ -25,22 +23,28 @@ const GDT_LIMIT: u16 = 23;
 const CODE_SELECTOR: u16 = 0x10;
 const DATA_SELECTOR: u16 = 0x18;
 
-pub(crate) struct Registers;
+pub(crate) struct Registers {
+    pub regs: kvm_regs,
+    pub sregs: kvm_sregs,
+}
 
 impl Registers {
-    pub fn for_kernel(kernel_entry: u64) -> RegState {
+    /// Compose registers that enter the kernel at `kernel_entry` in
+    /// long mode, RSI carrying the boot_params address per the Linux
+    /// 64-bit boot protocol, paging on, LAPIC enabled.
+    pub fn for_kernel(kernel_entry: u64) -> Self {
         let mut regs: kvm_regs = unsafe { std::mem::zeroed() };
         regs.rip = kernel_entry;
         regs.rsi = BOOT_PARAMS_ADDR;
         regs.rflags = 0x2;
 
         let mut sregs: kvm_sregs = unsafe { std::mem::zeroed() };
-        sregs.cs = Self::code_segment();
-        sregs.ds = Self::data_segment();
-        sregs.es = Self::data_segment();
-        sregs.fs = Self::data_segment();
-        sregs.gs = Self::data_segment();
-        sregs.ss = Self::data_segment();
+        sregs.cs = code_segment();
+        sregs.ds = data_segment();
+        sregs.es = data_segment();
+        sregs.fs = data_segment();
+        sregs.gs = data_segment();
+        sregs.ss = data_segment();
         sregs.tr.limit = 0xFFFF;
         sregs.tr.type_ = 0xB;
         sregs.tr.present = 1;
@@ -53,22 +57,29 @@ impl Registers {
         sregs.efer = EFER_LME | EFER_LMA;
         sregs.apic_base = APIC_BASE_BSP_ENABLED;
 
-        RegState { regs, sregs }
+        Registers { regs, sregs }
     }
 
-    fn code_segment() -> kvm_segment {
-        let mut s: kvm_segment = unsafe { std::mem::zeroed() };
-        s.limit = 0xFFFFFFFF; s.selector = CODE_SELECTOR; s.type_ = 0xA;
-        s.present = 1; s.s = 1; s.l = 1; s.g = 1;
-        s
+    /// Write `regs` then `sregs` to the vCPU.
+    pub fn apply_to(&self, vcpu: &VcpuFd) -> Result<(), KvmError> {
+        vcpu.set_sregs(&self.sregs)?;
+        vcpu.set_regs(&self.regs)?;
+        Ok(())
     }
+}
 
-    fn data_segment() -> kvm_segment {
-        let mut s: kvm_segment = unsafe { std::mem::zeroed() };
-        s.limit = 0xFFFFFFFF; s.selector = DATA_SELECTOR; s.type_ = 0x2;
-        s.present = 1; s.s = 1; s.db = 1; s.g = 1;
-        s
-    }
+fn code_segment() -> kvm_segment {
+    let mut s: kvm_segment = unsafe { std::mem::zeroed() };
+    s.limit = 0xFFFFFFFF; s.selector = CODE_SELECTOR; s.type_ = 0xA;
+    s.present = 1; s.s = 1; s.l = 1; s.g = 1;
+    s
+}
+
+fn data_segment() -> kvm_segment {
+    let mut s: kvm_segment = unsafe { std::mem::zeroed() };
+    s.limit = 0xFFFFFFFF; s.selector = DATA_SELECTOR; s.type_ = 0x2;
+    s.present = 1; s.s = 1; s.db = 1; s.g = 1;
+    s
 }
 
 #[cfg(test)]
@@ -79,45 +90,45 @@ mod tests {
 
     #[test]
     fn rip_at_kernel_entry_and_rsi_at_boot_params() {
-        let s = Registers::for_kernel(KERNEL_ENTRY);
-        assert_eq!(s.regs.rip, KERNEL_ENTRY);
-        assert_eq!(s.regs.rsi, BOOT_PARAMS_ADDR);
-        assert_eq!(s.regs.rflags & 0x2, 0x2);
+        let r = Registers::for_kernel(KERNEL_ENTRY);
+        assert_eq!(r.regs.rip, KERNEL_ENTRY);
+        assert_eq!(r.regs.rsi, BOOT_PARAMS_ADDR);
+        assert_eq!(r.regs.rflags & 0x2, 0x2);
     }
 
     #[test]
     fn long_mode_paging_and_pae() {
-        let s = Registers::for_kernel(KERNEL_ENTRY);
-        assert_ne!(s.sregs.cr0 & CR0_PE, 0, "protected mode");
-        assert_ne!(s.sregs.cr0 & CR0_PG, 0, "paging");
-        assert_ne!(s.sregs.cr4 & CR4_PAE, 0, "PAE");
-        assert_ne!(s.sregs.efer & EFER_LME, 0, "long mode enabled");
-        assert_ne!(s.sregs.efer & EFER_LMA, 0, "long mode active");
-        assert_eq!(s.sregs.cr3, PML4_ADDR);
+        let r = Registers::for_kernel(KERNEL_ENTRY);
+        assert_ne!(r.sregs.cr0 & CR0_PE, 0, "protected mode");
+        assert_ne!(r.sregs.cr0 & CR0_PG, 0, "paging");
+        assert_ne!(r.sregs.cr4 & CR4_PAE, 0, "PAE");
+        assert_ne!(r.sregs.efer & EFER_LME, 0, "long mode enabled");
+        assert_ne!(r.sregs.efer & EFER_LMA, 0, "long mode active");
+        assert_eq!(r.sregs.cr3, PML4_ADDR);
     }
 
     #[test]
     fn cs_is_64bit_code_segment() {
-        let s = Registers::for_kernel(KERNEL_ENTRY);
-        assert_eq!(s.sregs.cs.l, 1, "L bit (long mode)");
-        assert_eq!(s.sregs.cs.type_, 0xA);
-        assert_eq!(s.sregs.cs.present, 1);
-        assert_eq!(s.sregs.cs.selector, CODE_SELECTOR);
+        let r = Registers::for_kernel(KERNEL_ENTRY);
+        assert_eq!(r.sregs.cs.l, 1, "L bit (long mode)");
+        assert_eq!(r.sregs.cs.type_, 0xA);
+        assert_eq!(r.sregs.cs.present, 1);
+        assert_eq!(r.sregs.cs.selector, CODE_SELECTOR);
     }
 
     #[test]
     fn tr_present_ldt_unusable() {
-        let s = Registers::for_kernel(KERNEL_ENTRY);
-        assert_eq!(s.sregs.tr.present, 1);
-        assert_eq!(s.sregs.tr.type_, 0xB);
-        assert_eq!(s.sregs.ldt.unusable, 1);
+        let r = Registers::for_kernel(KERNEL_ENTRY);
+        assert_eq!(r.sregs.tr.present, 1);
+        assert_eq!(r.sregs.tr.type_, 0xB);
+        assert_eq!(r.sregs.ldt.unusable, 1);
     }
 
     #[test]
     fn apic_base_enabled_bsp() {
-        let s = Registers::for_kernel(KERNEL_ENTRY);
-        assert_eq!(s.sregs.apic_base & 0xfee0_0000, 0xfee0_0000);
-        assert_ne!(s.sregs.apic_base & 0x800, 0, "globally enabled");
-        assert_ne!(s.sregs.apic_base & 0x100, 0, "BSP");
+        let r = Registers::for_kernel(KERNEL_ENTRY);
+        assert_eq!(r.sregs.apic_base & 0xfee0_0000, 0xfee0_0000);
+        assert_ne!(r.sregs.apic_base & 0x800, 0, "globally enabled");
+        assert_ne!(r.sregs.apic_base & 0x100, 0, "BSP");
     }
 }

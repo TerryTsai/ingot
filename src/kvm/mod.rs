@@ -4,8 +4,6 @@
 //! kernel's: KvmFd opens /dev/kvm and creates VmFds; each VmFd creates
 //! VcpuFds; each VcpuFd runs the guest until a `VcpuExit`.
 
-use kvm_bindings::{kvm_regs, kvm_sregs};
-
 mod cpuid;
 mod error;
 mod ioctls;
@@ -19,14 +17,3 @@ pub(crate) use kvm_fd::KvmFd;
 pub use vcpu_fd::VcpuExit;
 pub(crate) use vcpu_fd::VcpuFd;
 pub(crate) use vm_fd::VmFd;
-
-pub struct RegState {
-    pub regs: kvm_regs,
-    pub sregs: kvm_sregs,
-}
-
-impl RegState {
-    pub fn zeroed() -> Self {
-        unsafe { std::mem::zeroed() }
-    }
-}
