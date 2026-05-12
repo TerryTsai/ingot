@@ -10,14 +10,13 @@ mod cpuid;
 mod error;
 mod ioctls;
 mod kvm_fd;
-mod vcpu_exit;
 mod vcpu_fd;
 mod vm_fd;
 
 pub(crate) use cpuid::Cpuid;
 pub use error::KvmError;
 pub(crate) use kvm_fd::KvmFd;
-pub use vcpu_exit::VcpuExit;
+pub use vcpu_fd::VcpuExit;
 pub(crate) use vcpu_fd::VcpuFd;
 pub(crate) use vm_fd::VmFd;
 
