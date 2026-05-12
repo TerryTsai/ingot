@@ -15,7 +15,7 @@ use std::os::fd::FromRawFd;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use crate::boot::{BootImage, TSS_ADDR};
+use crate::boot::{Image, TSS_ADDR};
 use crate::lifecycle::config::{Config, StdoutSink};
 use crate::devices::{Block, MmioBus, Net, Tap, Uart, UartInput, Vsock, COM1_BASE, COM1_GSI, COM1_LAST};
 use crate::lifecycle::error::{HostError, IngotError};
@@ -152,7 +152,7 @@ impl Vm {
     }
 
     fn boot_kernel(&mut self) -> Result<(), IngotError> {
-        let state = BootImage::new(
+        let state = Image::new(
             &mut self.mem,
             &self.config.kernel_path,
             self.config.initramfs_path.as_deref(),
