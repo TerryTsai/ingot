@@ -168,7 +168,7 @@ impl Vm {
     fn run_loop(&mut self) -> Result<ExitStatus, IngotError> {
         let mut uart_irq = false;
         let mut bus_gsis: Vec<u32> = Vec::new();
-        install_wakeup_timer();
+        Self::install_wakeup_timer();
         loop {
             match self.vcpus[0].run()? {
                 VcpuExit::Hlt => return Ok(ExitStatus::Halted),
@@ -215,7 +215,7 @@ impl Vm {
 
     fn handle_pio_in(&mut self, port: u16, len: usize) {
         let value = match port {
-            CMOS_DATA => cmos_read(self.cmos_index),
+            CMOS_DATA => Self::cmos_read(self.cmos_index),
             COM1_BASE..=COM1_LAST => self.uart.read((port - COM1_BASE) as u8),
             _ => 0xFF,
         };
@@ -346,43 +346,46 @@ impl Vm {
             peak_rss_kb: None,
         }
     }
+
+    /// Install a no-op SIGALRM handler and arm setitimer at 5ms intervals.
+    /// SIGALRM with no SA_RESTART forces `KVM_RUN` to return `-EINTR`, which
+    /// `VcpuFd::run` turns into `VcpuExit::Intr`. The run loop then drives
+    /// `poll_io` (TAP RX, etc.) before re-entering `KVM_RUN`. Without this,
+    /// a guest in `hlt` would never let the host drain its TAP fd because
+    /// nothing else generates a vCPU exit.
+    fn install_wakeup_timer() {
+        unsafe {
+            let mut sa: libc::sigaction = std::mem::zeroed();
+            sa.sa_sigaction = sigalrm_noop as *const () as libc::sighandler_t;
+            sa.sa_flags = 0;
+            libc::sigemptyset(&mut sa.sa_mask);
+            libc::sigaction(libc::SIGALRM, &sa, std::ptr::null_mut());
+            let it = libc::itimerval {
+                it_interval: libc::timeval { tv_sec: 0, tv_usec: 5_000 },
+                it_value:    libc::timeval { tv_sec: 0, tv_usec: 5_000 },
+            };
+            libc::setitimer(libc::ITIMER_REAL, &it, std::ptr::null_mut());
+        }
+    }
+
+    /// Return a plausible byte for CMOS register `index`. Time fields read
+    /// as zero (Linux's epoch fallback is fine); status registers report
+    /// "RTC running, not updating, 24h binary mode" so `read_persistent_clock`
+    /// proceeds instead of busy-looping on the UIP bit.
+    fn cmos_read(index: u8) -> u8 {
+        match index {
+            0x0A => 0x26,
+            0x0B => 0x06,
+            0x0D => 0x80,
+            _ => 0,
+        }
+    }
 }
 
+// `extern "C"` callback referenced from sigaction. Kept as a free fn
+// because the FFI ABI is at the item level — `impl Vm { extern "C" fn ... }`
+// is legal but unusual; this is the only non-method item in the file.
 extern "C" fn sigalrm_noop(_: libc::c_int) {}
-
-/// Install a no-op SIGALRM handler and arm setitimer at 5ms intervals.
-/// SIGALRM with no SA_RESTART forces `KVM_RUN` to return `-EINTR`, which
-/// `VcpuFd::run` turns into `VcpuExit::Intr`. The run loop then drives
-/// `poll_io` (TAP RX, etc.) before re-entering `KVM_RUN`. Without this,
-/// a guest in `hlt` would never let the host drain its TAP fd because
-/// nothing else generates a vCPU exit.
-fn install_wakeup_timer() {
-    unsafe {
-        let mut sa: libc::sigaction = std::mem::zeroed();
-        sa.sa_sigaction = sigalrm_noop as *const () as libc::sighandler_t;
-        sa.sa_flags = 0;
-        libc::sigemptyset(&mut sa.sa_mask);
-        libc::sigaction(libc::SIGALRM, &sa, std::ptr::null_mut());
-        let it = libc::itimerval {
-            it_interval: libc::timeval { tv_sec: 0, tv_usec: 5_000 },
-            it_value:    libc::timeval { tv_sec: 0, tv_usec: 5_000 },
-        };
-        libc::setitimer(libc::ITIMER_REAL, &it, std::ptr::null_mut());
-    }
-}
-
-/// Return a plausible byte for CMOS register `index`. Time fields read
-/// as zero (Linux's epoch fallback is fine); status registers report
-/// "RTC running, not updating, 24h binary mode" so `read_persistent_clock`
-/// proceeds instead of busy-looping on the UIP bit.
-fn cmos_read(index: u8) -> u8 {
-    match index {
-        0x0A => 0x26,
-        0x0B => 0x06,
-        0x0D => 0x80,
-        _ => 0,
-    }
-}
 
 struct BufferSink(Arc<Mutex<Vec<u8>>>);
 impl Write for BufferSink {

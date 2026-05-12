@@ -8,7 +8,7 @@ use kvm_bindings::KVM_API_VERSION;
 use super::cpuid::Cpuid;
 use super::ioctls::*;
 use super::vm_fd::VmFd;
-use super::{check, errno, KvmError};
+use super::KvmError;
 
 const DEV_KVM: &[u8] = b"/dev/kvm\0";
 
@@ -21,17 +21,17 @@ impl KvmFd {
     pub fn open() -> Result<Self, KvmError> {
         let raw = unsafe { libc::open(DEV_KVM.as_ptr() as _, libc::O_RDWR | libc::O_CLOEXEC) };
         if raw < 0 {
-            return Err(KvmError::Open(errno()));
+            return Err(KvmError::Open(KvmError::last_errno()));
         }
         let fd = unsafe { OwnedFd::from_raw_fd(raw) };
-        let api = check(
+        let api = KvmError::check_ioctl(
             unsafe { libc::ioctl(fd.as_raw_fd(), KVM_GET_API_VERSION, 0) },
             "KVM_GET_API_VERSION",
         )?;
         if api as u32 != KVM_API_VERSION {
             return Err(KvmError::AbiVersionMismatch { got: api, want: KVM_API_VERSION });
         }
-        let mmap = check(
+        let mmap = KvmError::check_ioctl(
             unsafe { libc::ioctl(fd.as_raw_fd(), KVM_GET_VCPU_MMAP_SIZE, 0) },
             "KVM_GET_VCPU_MMAP_SIZE",
         )?;
@@ -39,7 +39,7 @@ impl KvmFd {
     }
 
     pub fn create_vm(&self) -> Result<VmFd, KvmError> {
-        let raw = check(
+        let raw = KvmError::check_ioctl(
             unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_CREATE_VM, 0) },
             "KVM_CREATE_VM",
         )?;
@@ -49,7 +49,7 @@ impl KvmFd {
     /// Returns the CPUID entries KVM will honor when set on a vCPU.
     pub fn supported_cpuid(&self) -> Result<Box<Cpuid>, KvmError> {
         let mut buf = Cpuid::new();
-        check(
+        KvmError::check_ioctl(
             unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_GET_SUPPORTED_CPUID, &mut *buf) },
             "KVM_GET_SUPPORTED_CPUID",
         )?;

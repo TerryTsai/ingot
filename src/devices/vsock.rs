@@ -41,8 +41,8 @@ impl Vsock {
         Ok(Vsock {
             mmio: VirtioMmio::new(DEVICE_ID_VSOCK, VENDOR_ID, VIRTIO_F_VERSION_1, NUM_QUEUES),
             vhost, guest_cid,
-            kicks: [eventfd()?, eventfd()?, eventfd()?],
-            calls: [eventfd()?, eventfd()?, eventfd()?],
+            kicks: [Self::eventfd()?, Self::eventfd()?, Self::eventfd()?],
+            calls: [Self::eventfd()?, Self::eventfd()?, Self::eventfd()?],
             configured: [false; NUM_QUEUES], running: false,
         })
     }
@@ -89,6 +89,14 @@ impl Vsock {
             if n == 8 { self.mmio.interrupt_status |= INT_USED_RING; }
         }
     }
+
+    fn eventfd() -> Result<OwnedFd, HostError> {
+        let fd = unsafe { libc::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC) };
+        if fd < 0 { Err(HostError::VhostVsockOpenFailed(Self::errno())) }
+        else { Ok(unsafe { OwnedFd::from_raw_fd(fd) }) }
+    }
+
+    fn errno() -> i32 { std::io::Error::last_os_error().raw_os_error().unwrap_or(0) }
 }
 
 impl MmioDevice for Vsock {
@@ -127,10 +135,3 @@ impl MmioDevice for Vsock {
     }
 }
 
-fn eventfd() -> Result<OwnedFd, HostError> {
-    let fd = unsafe { libc::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC) };
-    if fd < 0 { Err(HostError::VhostVsockOpenFailed(errno())) }
-    else { Ok(unsafe { OwnedFd::from_raw_fd(fd) }) }
-}
-
-fn errno() -> i32 { std::io::Error::last_os_error().raw_os_error().unwrap_or(0) }

@@ -42,14 +42,19 @@ pub enum KvmError {
     UnhandledExit(u32),
 }
 
-pub(crate) fn errno() -> i32 {
-    io::Error::last_os_error().raw_os_error().unwrap_or(0)
-}
+impl KvmError {
+    pub(crate) fn last_errno() -> i32 {
+        io::Error::last_os_error().raw_os_error().unwrap_or(0)
+    }
 
-pub(crate) fn check(r: libc::c_int, name: &'static str) -> Result<libc::c_int, KvmError> {
-    if r < 0 {
-        Err(KvmError::Ioctl { name, errno: errno() })
-    } else {
-        Ok(r)
+    /// Convert an ioctl return value to `Result`. Non-negative values
+    /// pass through; negative ones become `KvmError::Ioctl` with the
+    /// current errno and the ioctl name for diagnostics.
+    pub(crate) fn check_ioctl(r: libc::c_int, name: &'static str) -> Result<libc::c_int, KvmError> {
+        if r < 0 {
+            Err(KvmError::Ioctl { name, errno: Self::last_errno() })
+        } else {
+            Ok(r)
+        }
     }
 }

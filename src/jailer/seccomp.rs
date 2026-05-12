@@ -34,6 +34,29 @@ const PR_SET_SECCOMP: libc::c_int = 22;
 #[derive(Copy, Clone)]
 pub enum Mode { Log, Strict }
 
+impl Mode {
+    /// Install the filter. Must be called *after* all setup syscalls that
+    /// aren't in `ALLOW` (e.g. open, socket, connect, bind) have happened.
+    /// In practice: just before the Vm::run run loop, never earlier.
+    pub fn install(self) -> io::Result<()> {
+        let default = match self { Mode::Log => SECCOMP_RET_LOG, Mode::Strict => SECCOMP_RET_KILL_PROCESS };
+        let mut prog: Vec<SockFilter> = Vec::with_capacity(ALLOW.len() * 2 + 2);
+        // Load syscall_nr at seccomp_data offset 0
+        prog.push(SockFilter { code: BPF_LD | BPF_W | BPF_ABS, jt: 0, jf: 0, k: 0 });
+        for &nr in ALLOW {
+            prog.push(SockFilter { code: BPF_JMP | BPF_JEQ | BPF_K, jt: 0, jf: 1, k: nr as u32 });
+            prog.push(SockFilter { code: BPF_RET | BPF_K, jt: 0, jf: 0, k: SECCOMP_RET_ALLOW });
+        }
+        prog.push(SockFilter { code: BPF_RET | BPF_K, jt: 0, jf: 0, k: default });
+        let fprog = SockFprog { len: prog.len() as u16, filter: prog.as_ptr() };
+        let r = unsafe { libc::prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) };
+        if r < 0 { return Err(io::Error::last_os_error()); }
+        let r = unsafe { libc::prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &fprog as *const _, 0, 0) };
+        if r < 0 { return Err(io::Error::last_os_error()); }
+        Ok(())
+    }
+}
+
 /// Runtime allowlist for the VMM after Vm::new finishes. Each entry
 /// MUST be justified — see the comment above its line. Order doesn't
 /// affect correctness but does affect the dispatch cost; keep the hot
@@ -81,23 +104,3 @@ const ALLOW: &[libc::c_long] = &[
     libc::SYS_getrandom,         // Rust HashMap seed
 ];
 
-/// Install the filter. Must be called *after* all setup syscalls that
-/// aren't in `ALLOW` (e.g. open, socket, connect, bind) have happened.
-/// In practice: just before the Vm::run run loop, never earlier.
-pub fn install(mode: Mode) -> io::Result<()> {
-    let default = match mode { Mode::Log => SECCOMP_RET_LOG, Mode::Strict => SECCOMP_RET_KILL_PROCESS };
-    let mut prog: Vec<SockFilter> = Vec::with_capacity(ALLOW.len() * 2 + 2);
-    // Load syscall_nr at seccomp_data offset 0
-    prog.push(SockFilter { code: BPF_LD | BPF_W | BPF_ABS, jt: 0, jf: 0, k: 0 });
-    for &nr in ALLOW {
-        prog.push(SockFilter { code: BPF_JMP | BPF_JEQ | BPF_K, jt: 0, jf: 1, k: nr as u32 });
-        prog.push(SockFilter { code: BPF_RET | BPF_K, jt: 0, jf: 0, k: SECCOMP_RET_ALLOW });
-    }
-    prog.push(SockFilter { code: BPF_RET | BPF_K, jt: 0, jf: 0, k: default });
-    let fprog = SockFprog { len: prog.len() as u16, filter: prog.as_ptr() };
-    let r = unsafe { libc::prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) };
-    if r < 0 { return Err(io::Error::last_os_error()); }
-    let r = unsafe { libc::prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &fprog as *const _, 0, 0) };
-    if r < 0 { return Err(io::Error::last_os_error()); }
-    Ok(())
-}

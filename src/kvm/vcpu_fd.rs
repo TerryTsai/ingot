@@ -8,7 +8,7 @@ use kvm_bindings::{kvm_regs, kvm_run, kvm_sregs};
 use super::cpuid::Cpuid;
 use super::ioctls::*;
 use super::vcpu_exit::{decode_exit, VcpuExit};
-use super::{check, errno, KvmError};
+use super::KvmError;
 
 pub(crate) struct VcpuFd {
     fd: OwnedFd,
@@ -19,7 +19,7 @@ pub(crate) struct VcpuFd {
 
 impl VcpuFd {
     pub(super) fn create(vm_fd: RawFd, id: u32, mmap_size: usize) -> Result<Self, KvmError> {
-        let raw = check(
+        let raw = KvmError::check_ioctl(
             unsafe { libc::ioctl(vm_fd, KVM_CREATE_VCPU, id as libc::c_ulong) },
             "KVM_CREATE_VCPU",
         )?;
@@ -35,7 +35,7 @@ impl VcpuFd {
             )
         };
         if p == libc::MAP_FAILED {
-            return Err(KvmError::Mmap(errno()));
+            return Err(KvmError::Mmap(KvmError::last_errno()));
         }
         Ok(VcpuFd { fd, id, run_ptr: p as *mut kvm_run, mmap_size })
     }
@@ -46,28 +46,28 @@ impl VcpuFd {
 
     pub fn get_regs(&self) -> Result<kvm_regs, KvmError> {
         let mut regs = unsafe { std::mem::zeroed::<kvm_regs>() };
-        check(unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_GET_REGS, &mut regs) }, "KVM_GET_REGS")?;
+        KvmError::check_ioctl(unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_GET_REGS, &mut regs) }, "KVM_GET_REGS")?;
         Ok(regs)
     }
 
     pub fn set_regs(&self, regs: &kvm_regs) -> Result<(), KvmError> {
-        check(unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_SET_REGS, regs) }, "KVM_SET_REGS")?;
+        KvmError::check_ioctl(unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_SET_REGS, regs) }, "KVM_SET_REGS")?;
         Ok(())
     }
 
     pub fn get_sregs(&self) -> Result<kvm_sregs, KvmError> {
         let mut sregs = unsafe { std::mem::zeroed::<kvm_sregs>() };
-        check(unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_GET_SREGS, &mut sregs) }, "KVM_GET_SREGS")?;
+        KvmError::check_ioctl(unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_GET_SREGS, &mut sregs) }, "KVM_GET_SREGS")?;
         Ok(sregs)
     }
 
     pub fn set_sregs(&self, sregs: &kvm_sregs) -> Result<(), KvmError> {
-        check(unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_SET_SREGS, sregs) }, "KVM_SET_SREGS")?;
+        KvmError::check_ioctl(unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_SET_SREGS, sregs) }, "KVM_SET_SREGS")?;
         Ok(())
     }
 
     pub fn set_cpuid2(&self, cpuid: &Cpuid) -> Result<(), KvmError> {
-        check(
+        KvmError::check_ioctl(
             unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_SET_CPUID2, cpuid as *const _) },
             "KVM_SET_CPUID2",
         )?;
@@ -77,7 +77,7 @@ impl VcpuFd {
     pub fn run(&mut self) -> Result<VcpuExit, KvmError> {
         let r = unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_RUN, 0) };
         if r < 0 {
-            let e = errno();
+            let e = KvmError::last_errno();
             if e == libc::EINTR { return Ok(VcpuExit::Intr); }
             return Err(KvmError::Ioctl { name: "KVM_RUN", errno: e });
         }

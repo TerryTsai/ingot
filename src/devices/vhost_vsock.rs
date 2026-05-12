@@ -66,7 +66,7 @@ pub(crate) struct VringConfig {
 impl VhostVsock {
     pub fn open(guest_cid: u64, mem_phys: u64, mem_size: u64, host_addr: u64) -> Result<Self, HostError> {
         let raw = unsafe { libc::open(c"/dev/vhost-vsock".as_ptr(), libc::O_RDWR) };
-        if raw < 0 { return Err(HostError::VhostVsockOpenFailed(errno())); }
+        if raw < 0 { return Err(HostError::VhostVsockOpenFailed(Self::errno())); }
         let v = VhostVsock { fd: unsafe { OwnedFd::from_raw_fd(raw) }, mem_base: host_addr };
         v.ioctl_w0(VHOST_SET_OWNER)?;
         v.ioctl_w(VHOST_SET_FEATURES, &0u64)?;
@@ -96,13 +96,13 @@ impl VhostVsock {
 
     fn ioctl_w0(&self, req: c_ulong) -> Result<(), HostError> {
         let r = unsafe { libc::ioctl(self.fd.as_raw_fd(), req as _, 0) };
-        if r < 0 { Err(HostError::VhostVsockIoctl(errno())) } else { Ok(()) }
+        if r < 0 { Err(HostError::VhostVsockIoctl(Self::errno())) } else { Ok(()) }
     }
 
     fn ioctl_w<T>(&self, req: c_ulong, val: &T) -> Result<(), HostError> {
         let r = unsafe { libc::ioctl(self.fd.as_raw_fd(), req as _, val as *const _) };
-        if r < 0 { Err(HostError::VhostVsockIoctl(errno())) } else { Ok(()) }
+        if r < 0 { Err(HostError::VhostVsockIoctl(Self::errno())) } else { Ok(()) }
     }
-}
 
-fn errno() -> i32 { std::io::Error::last_os_error().raw_os_error().unwrap_or(0) }
+    fn errno() -> i32 { std::io::Error::last_os_error().raw_os_error().unwrap_or(0) }
+}

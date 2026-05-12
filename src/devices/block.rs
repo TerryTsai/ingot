@@ -65,7 +65,7 @@ impl Block {
         let mut serviced = 0u32;
         while let Some(head) = self.mmio.queues[QUEUE_IDX].pop_avail(mem)? {
             let (header_desc, data_descs, status_desc) = self.split_chain(mem, head)?;
-            let (req_type, sector) = read_header(mem, &header_desc)?;
+            let (req_type, sector) = Self::read_header(mem, &header_desc)?;
             let (status, written) = self.service(mem, req_type, sector, &data_descs);
             mem.write(status_desc.addr, &[status])?;
             self.mmio.queues[QUEUE_IDX].push_used(mem, head, written + 1)?;
@@ -126,14 +126,14 @@ impl Block {
         }
         Ok((STATUS_OK, total))
     }
-}
 
-fn read_header(mem: &Memory, h: &Desc) -> Result<(u32, u64), GuestError> {
-    let mut buf = [0u8; HEADER_LEN as usize];
-    mem.read(h.addr, &mut buf)?;
-    let req_type = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
-    let sector = u64::from_le_bytes([buf[8], buf[9], buf[10], buf[11], buf[12], buf[13], buf[14], buf[15]]);
-    Ok((req_type, sector))
+    fn read_header(mem: &Memory, h: &Desc) -> Result<(u32, u64), GuestError> {
+        let mut buf = [0u8; HEADER_LEN as usize];
+        mem.read(h.addr, &mut buf)?;
+        let req_type = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+        let sector = u64::from_le_bytes([buf[8], buf[9], buf[10], buf[11], buf[12], buf[13], buf[14], buf[15]]);
+        Ok((req_type, sector))
+    }
 }
 
 impl MmioDevice for Block {

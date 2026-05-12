@@ -7,7 +7,7 @@ use kvm_bindings::kvm_userspace_memory_region;
 
 use super::ioctls::*;
 use super::vcpu_fd::VcpuFd;
-use super::{check, KvmError};
+use super::KvmError;
 
 pub(crate) struct VmFd {
     fd: OwnedFd,
@@ -23,7 +23,7 @@ impl VmFd {
     /// Intel hosts before `create_irqchip`. The region must not overlap any
     /// registered userspace memory region.
     pub fn set_tss_addr(&self, addr: u32) -> Result<(), KvmError> {
-        check(
+        KvmError::check_ioctl(
             unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_SET_TSS_ADDR, addr as libc::c_ulong) },
             "KVM_SET_TSS_ADDR",
         )?;
@@ -34,7 +34,7 @@ impl VmFd {
     /// Must be called before any vCPU is created and (on Intel) after
     /// `set_tss_addr`.
     pub fn create_irqchip(&self) -> Result<(), KvmError> {
-        check(
+        KvmError::check_ioctl(
             unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_CREATE_IRQCHIP, 0) },
             "KVM_CREATE_IRQCHIP",
         )?;
@@ -45,7 +45,7 @@ impl VmFd {
     /// timer calibration; without it the kernel hangs after init_IRQ.
     pub fn create_pit2(&self) -> Result<(), KvmError> {
         let config = [0u32; 16]; // struct kvm_pit_config { flags=0, pad[15]=0 }
-        check(
+        KvmError::check_ioctl(
             unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_CREATE_PIT2, &config) },
             "KVM_CREATE_PIT2",
         )?;
@@ -66,7 +66,7 @@ impl VmFd {
             memory_size: size,
             userspace_addr: host_addr as u64,
         };
-        check(
+        KvmError::check_ioctl(
             unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_SET_USER_MEMORY_REGION, &region) },
             "KVM_SET_USER_MEMORY_REGION",
         )?;
@@ -82,7 +82,7 @@ impl VmFd {
     /// level-triggered devices set 1 and clear 0 when the source clears.
     pub fn set_irq_line(&self, irq: u32, level: u32) -> Result<(), KvmError> {
         let payload = [irq, level];
-        check(
+        KvmError::check_ioctl(
             unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_IRQ_LINE, &payload) },
             "KVM_IRQ_LINE",
         )?;

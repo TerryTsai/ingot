@@ -6,4 +6,4 @@
 
 mod seccomp;
 
-pub use seccomp::{install, Mode};
+pub use seccomp::Mode;

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Instant;
 
-use ingot::{install_seccomp, BlockSpec, Config, Outcome, SeccompMode, StdoutSink, Vm, VsockSpec};
+use ingot::{BlockSpec, Config, Outcome, SeccompMode, StdoutSink, Vm, VsockSpec};
 
 fn parse_rootfs(value: &str) -> BlockSpec {
     let (path, readonly) = match value.strip_suffix(":ro") {
@@ -37,7 +37,7 @@ fn cli(args: &[String]) -> Result<(), u8> {
     let vm = Vm::new(config).map_err(|e| { eprintln!("ingot: {:?}", e); 1u8 })?;
     let t_new_done = Instant::now();
     if let Some(mode) = seccomp {
-        if let Err(e) = install_seccomp(mode) {
+        if let Err(e) = mode.install() {
             eprintln!("ingot: seccomp install failed: {e:?}");
             return Err(1);
         }

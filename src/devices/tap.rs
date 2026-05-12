@@ -29,14 +29,14 @@ pub(crate) struct Tap {
 impl Tap {
     pub fn open(name: &str) -> Result<Self, HostError> {
         let raw = unsafe { libc::open(DEV_NET_TUN.as_ptr() as _, libc::O_RDWR) };
-        if raw < 0 { return Err(HostError::TapOpenFailed(errno())); }
+        if raw < 0 { return Err(HostError::TapOpenFailed(Self::errno())); }
         let fd = unsafe { OwnedFd::from_raw_fd(raw) };
         let mut req = Ifreq { name: [0; IFNAMSIZ], flags: IFF_TAP | IFF_NO_PI, _pad: [0; 22] };
         let bytes = name.as_bytes();
         if bytes.len() >= IFNAMSIZ { return Err(HostError::InvalidConfig("tap name too long")); }
         req.name[..bytes.len()].copy_from_slice(bytes);
         let r = unsafe { libc::ioctl(fd.as_raw_fd(), TUNSETIFF as _, &mut req) };
-        if r < 0 { return Err(HostError::TapOpenFailed(errno())); }
+        if r < 0 { return Err(HostError::TapOpenFailed(Self::errno())); }
         let flags = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETFL) };
         unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) };
         Ok(Tap { fd })
@@ -58,6 +58,5 @@ impl Tap {
         }
     }
 
+    fn errno() -> c_int { std::io::Error::last_os_error().raw_os_error().unwrap_or(0) }
 }
-
-fn errno() -> c_int { std::io::Error::last_os_error().raw_os_error().unwrap_or(0) }

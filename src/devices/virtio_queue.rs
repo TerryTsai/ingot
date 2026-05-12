@@ -41,22 +41,22 @@ impl VirtioQueue {
         }
     }
 
-    pub fn set_desc_lo(&mut self, v: u32) { set_lo(&mut self.desc_addr, v); }
-    pub fn set_desc_hi(&mut self, v: u32) { set_hi(&mut self.desc_addr, v); }
-    pub fn set_avail_lo(&mut self, v: u32) { set_lo(&mut self.avail_addr, v); }
-    pub fn set_avail_hi(&mut self, v: u32) { set_hi(&mut self.avail_addr, v); }
-    pub fn set_used_lo(&mut self, v: u32) { set_lo(&mut self.used_addr, v); }
-    pub fn set_used_hi(&mut self, v: u32) { set_hi(&mut self.used_addr, v); }
+    pub fn set_desc_lo(&mut self, v: u32)  { Self::set_lo(&mut self.desc_addr, v); }
+    pub fn set_desc_hi(&mut self, v: u32)  { Self::set_hi(&mut self.desc_addr, v); }
+    pub fn set_avail_lo(&mut self, v: u32) { Self::set_lo(&mut self.avail_addr, v); }
+    pub fn set_avail_hi(&mut self, v: u32) { Self::set_hi(&mut self.avail_addr, v); }
+    pub fn set_used_lo(&mut self, v: u32)  { Self::set_lo(&mut self.used_addr, v); }
+    pub fn set_used_hi(&mut self, v: u32)  { Self::set_hi(&mut self.used_addr, v); }
 
     /// Pop the next descriptor-chain head from the available ring, if
     /// one has appeared since the last call. Returns `None` if empty,
     /// errors on malformed indices.
     pub fn pop_avail(&mut self, mem: &Memory) -> Result<Option<u16>, GuestError> {
         if self.ready == 0 || self.num == 0 { return Ok(None); }
-        let avail_idx = read_u16(mem, self.avail_addr + 2)?;
+        let avail_idx = Self::read_u16(mem, self.avail_addr + 2)?;
         if avail_idx == self.last_avail_idx { return Ok(None); }
         let ring_off = self.avail_addr + 4 + ((self.last_avail_idx as u64) % self.num as u64) * 2;
-        let head = read_u16(mem, ring_off)?;
+        let head = Self::read_u16(mem, ring_off)?;
         if (head as u32) >= self.num { return Err(GuestError::MalformedDescriptor); }
         self.last_avail_idx = self.last_avail_idx.wrapping_add(1);
         Ok(Some(head))
@@ -66,19 +66,19 @@ impl VirtioQueue {
         if (idx as u32) >= self.num { return Err(GuestError::MalformedDescriptor); }
         let off = self.desc_addr + idx as u64 * DESC_SIZE;
         Ok(Desc {
-            addr: read_u64(mem, off)?,
-            len: read_u32(mem, off + 8)?,
-            flags: read_u16(mem, off + 12)?,
-            next: read_u16(mem, off + 14)?,
+            addr: Self::read_u64(mem, off)?,
+            len: Self::read_u32(mem, off + 8)?,
+            flags: Self::read_u16(mem, off + 12)?,
+            next: Self::read_u16(mem, off + 14)?,
         })
     }
 
     pub fn push_used(&self, mem: &mut Memory, id: u16, len: u32) -> Result<(), GuestError> {
-        let used_idx = read_u16(mem, self.used_addr + 2)?;
+        let used_idx = Self::read_u16(mem, self.used_addr + 2)?;
         let ring_off = self.used_addr + 4 + ((used_idx as u64) % self.num as u64) * USED_ELEM_SIZE;
-        write_u32(mem, ring_off, id as u32)?;
-        write_u32(mem, ring_off + 4, len)?;
-        write_u16(mem, self.used_addr + 2, used_idx.wrapping_add(1))?;
+        Self::write_u32(mem, ring_off, id as u32)?;
+        Self::write_u32(mem, ring_off + 4, len)?;
+        Self::write_u16(mem, self.used_addr + 2, used_idx.wrapping_add(1))?;
         Ok(())
     }
 
@@ -116,22 +116,22 @@ impl VirtioQueue {
         }
         Err(GuestError::DescriptorChainCycle)
     }
-}
 
-fn set_lo(a: &mut u64, v: u32) { *a = (*a & 0xFFFFFFFF_00000000) | (v as u64); }
-fn set_hi(a: &mut u64, v: u32) { *a = (*a & 0x00000000_FFFFFFFF) | ((v as u64) << 32); }
+    fn set_lo(a: &mut u64, v: u32) { *a = (*a & 0xFFFFFFFF_00000000) | (v as u64); }
+    fn set_hi(a: &mut u64, v: u32) { *a = (*a & 0x00000000_FFFFFFFF) | ((v as u64) << 32); }
 
-fn read_u16(m: &Memory, a: u64) -> Result<u16, GuestError> {
-    let mut b = [0u8; 2]; m.read(a, &mut b)?; Ok(u16::from_le_bytes(b))
+    fn read_u16(m: &Memory, a: u64) -> Result<u16, GuestError> {
+        let mut b = [0u8; 2]; m.read(a, &mut b)?; Ok(u16::from_le_bytes(b))
+    }
+    fn read_u32(m: &Memory, a: u64) -> Result<u32, GuestError> {
+        let mut b = [0u8; 4]; m.read(a, &mut b)?; Ok(u32::from_le_bytes(b))
+    }
+    fn read_u64(m: &Memory, a: u64) -> Result<u64, GuestError> {
+        let mut b = [0u8; 8]; m.read(a, &mut b)?; Ok(u64::from_le_bytes(b))
+    }
+    fn write_u16(m: &mut Memory, a: u64, v: u16) -> Result<(), GuestError> { m.write(a, &v.to_le_bytes()) }
+    fn write_u32(m: &mut Memory, a: u64, v: u32) -> Result<(), GuestError> { m.write(a, &v.to_le_bytes()) }
 }
-fn read_u32(m: &Memory, a: u64) -> Result<u32, GuestError> {
-    let mut b = [0u8; 4]; m.read(a, &mut b)?; Ok(u32::from_le_bytes(b))
-}
-fn read_u64(m: &Memory, a: u64) -> Result<u64, GuestError> {
-    let mut b = [0u8; 8]; m.read(a, &mut b)?; Ok(u64::from_le_bytes(b))
-}
-fn write_u16(m: &mut Memory, a: u64, v: u16) -> Result<(), GuestError> { m.write(a, &v.to_le_bytes()) }
-fn write_u32(m: &mut Memory, a: u64, v: u32) -> Result<(), GuestError> { m.write(a, &v.to_le_bytes()) }
 
 #[cfg(test)]
 mod tests {
