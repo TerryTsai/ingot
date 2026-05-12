@@ -137,12 +137,9 @@ impl Bus {
     }
 
     fn find_pio(&mut self, port: u16, len: u16) -> Option<&mut PioRegion> {
-        for r in &mut self.pio {
-            if port >= r.base && port.saturating_add(len) <= r.base + r.size {
-                return Some(r);
-            }
-        }
-        None
+        self.pio.iter_mut().find(|r| {
+            port >= r.base && port.saturating_add(len) <= r.base + r.size
+        })
     }
 }
 
@@ -275,5 +272,62 @@ mod tests {
         let (b, _, _, _) = PioCounter::new();
         bus.register_pio(0x3F8, 8, Box::new(a)).unwrap();
         assert!(bus.register_pio(0x3FC, 4, Box::new(b)).is_err());
+    }
+
+    // ── property tests (SPEC §3.3: hostile-guest addresses) ────────────
+    //
+    // The contract: routing decisions on any (addr, len) pair never panic.
+    // Out-of-range MMIO returns MmioOutOfRange; out-of-range PIO returns
+    // all-0xFF for reads and silently drops writes.
+
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 200, .. ProptestConfig::default() })]
+
+        /// MMIO read at any address never panics.
+        #[test]
+        fn mmio_read_terminates_on_any_address(addr in any::<u64>(), len in 1usize..9) {
+            let mut bus = Bus::new();
+            let (dev, _, _, _) = MmioCounter::new();
+            bus.register_mmio(0xD000_0000, 0x1000, Box::new(dev)).unwrap();
+            let mut buf = [0u8; 8];
+            let _ = bus.read_mmio(addr, &mut buf[..len]);
+        }
+
+        /// MMIO write at any address never panics.
+        #[test]
+        fn mmio_write_terminates_on_any_address(addr in any::<u64>(), data in prop::collection::vec(any::<u8>(), 1..9)) {
+            let mut bus = Bus::new();
+            let mut m = mem();
+            let (dev, _, _, _) = MmioCounter::new();
+            bus.register_mmio(0xD000_0000, 0x1000, Box::new(dev)).unwrap();
+            let _ = bus.write_mmio(addr, &data, &mut m);
+        }
+
+        /// PIO read at any port returns valid data without panicking.
+        /// Unrouted ports return 0xFF.
+        #[test]
+        fn pio_read_returns_ff_outside_any_region(port in any::<u16>(), len in 1usize..5) {
+            let mut bus = Bus::new();
+            let (dev, _, _, _) = PioCounter::new();
+            bus.register_pio(0x3F8, 8, Box::new(dev)).unwrap();
+            let mut buf = [0u8; 4];
+            bus.read_pio(port, &mut buf[..len]);
+            // If port is outside [0x3F8, 0x3FF], expect 0xFF for all bytes.
+            if port < 0x3F8 || port.saturating_add(len as u16) > 0x400 {
+                for b in &buf[..len] { prop_assert_eq!(*b, 0xFF); }
+            }
+        }
+
+        /// PIO write at any port either dispatches or silently drops.
+        /// Never panics.
+        #[test]
+        fn pio_write_terminates_on_any_port(port in any::<u16>(), data in prop::collection::vec(any::<u8>(), 1..5)) {
+            let mut bus = Bus::new();
+            let (dev, _, _, _) = PioCounter::new();
+            bus.register_pio(0x3F8, 8, Box::new(dev)).unwrap();
+            bus.write_pio(port, &data);
+        }
     }
 }

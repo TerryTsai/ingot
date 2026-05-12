@@ -111,7 +111,7 @@ impl<'m> Image<'m> {
         a.org(PML4_ADDR);
         a.q(0, PDPT_ADDR | 0x3);                            // PML4[0] → PDPT (P+RW)
         for i in 0..4 {
-            a.q(0x1000 + i as u64 * 8, (i as u64) * 0x4000_0000 | 0x83);
+            a.q(0x1000 + i as u64 * 8, ((i as u64) * 0x4000_0000) | 0x83);
         }
 
         // ─── 0x0002_0000  cmdline (dense) ───────────────────────────────

@@ -157,4 +157,77 @@ mod tests {
         let expected: u32 = (0..200u32).map(|i| i & 0xff).sum();
         assert_eq!(c, ((256u32.wrapping_sub(expected)) & 0xff) as u8);
     }
+
+    // ── property tests ─────────────────────────────────────────────────
+    //
+    // Asm's contract: any sequence of `org`/emit/poke that stays within
+    // guest memory bounds completes without panic, and `cksum` of a
+    // written range always returns the byte that makes the range sum to
+    // 0 mod 256.
+
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 200, .. ProptestConfig::default() })]
+
+        /// Cursor advances by exactly the number of bytes emitted.
+        #[test]
+        fn cursor_advances_by_emit_width(
+            ops in prop::collection::vec(0u8..4, 1..40),  // 0=db, 1=dw, 2=dd, 3=dq
+        ) {
+            let mut m = mem();
+            let mut a = Asm::new(&mut m);
+            a.org(0x1000);
+            let mut expected = 0x1000u64;
+            for op in ops {
+                match op {
+                    0 => { a.db(0xAA); expected += 1; }
+                    1 => { a.dw(0xBBCC); expected += 2; }
+                    2 => { a.dd(0xDD); expected += 4; }
+                    _ => { a.dq(0xEE); expected += 8; }
+                }
+                prop_assert_eq!(a.here(), expected);
+            }
+        }
+
+        /// Poke at offset doesn't move the cursor.
+        #[test]
+        fn poke_never_moves_cursor(
+            pokes in prop::collection::vec((0u64..0x100, any::<u8>()), 1..20),
+        ) {
+            let mut m = mem();
+            let mut a = Asm::new(&mut m);
+            a.org(0x2000);
+            let cursor = a.here();
+            for (off, v) in pokes {
+                a.b(off, v);
+                prop_assert_eq!(a.here(), cursor);
+            }
+        }
+
+        /// Checksum of a range always makes that range plus the checksum
+        /// byte sum to 0 mod 256, for any byte pattern.
+        #[test]
+        fn cksum_balances_any_byte_pattern(
+            bytes in prop::collection::vec(any::<u8>(), 1..512),
+        ) {
+            let mut m = mem();
+            let mut a = Asm::new(&mut m);
+            a.org(0x3000);
+            a.raw(&bytes);
+            let c = a.cksum(0x3000..0x3000 + bytes.len() as u64);
+            let sum_with_check: u32 = bytes.iter().map(|&b| b as u32).sum::<u32>() + c as u32;
+            prop_assert_eq!(sum_with_check % 256, 0);
+        }
+
+        /// org resets cursor to the given address; subsequent here()
+        /// returns exactly that address.
+        #[test]
+        fn org_resets_cursor_to_arg(addr in 0u64..0x80_000) {
+            let mut m = mem();
+            let mut a = Asm::new(&mut m);
+            a.org(addr);
+            prop_assert_eq!(a.here(), addr);
+        }
+    }
 }

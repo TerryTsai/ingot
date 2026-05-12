@@ -14,13 +14,20 @@ jobs:
       - name: Toolchain
         run: rustup show
       # GitHub runners don't expose /dev/kvm. Tests that need it use
-      # `open_or_skip` (see src/kvm/test_helpers.rs) and skip-pass on
-      # access failure — so the suite still runs, just with fewer
-      # assertions per test. The point of CI here is to catch
-      # compilation regressions + lints + the pure-validation tests.
-      - name: Build
+      # `KvmFd::open_or_skip` (cfg-test associated fn in src/kvm/kvm_fd.rs)
+      # and skip-pass on access failure — so the suite still runs, just
+      # with fewer assertions per test. CI catches:
+      #   - compilation regressions
+      #   - lints (clippy -D warnings)
+      #   - property-based tests (200 random adversarial cases per property)
+      #   - pure-validation tests
+      # The kernel-boot tests run on the dev host or scheduled runners
+      # with KVM access.
+      - name: Build (release)
         run: cargo build --release --verbose
-      - name: Unit tests + doctest
+      - name: Build (jailer binary)
+        run: cargo build --release --bin ingot-jailer
+      - name: Unit + property tests
         run: cargo test --quiet
       - name: Clippy
         run: cargo clippy --release -- -D warnings

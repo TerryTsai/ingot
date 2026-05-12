@@ -6,7 +6,14 @@ SPEC.md is authoritative. Where this document conflicts with SPEC.md, SPEC.md wi
 
 ## 0. Status
 
-Tentative. Every decision in this document is subject to revision based on the Phase 0 falsification spikes (cold boot, typed harness, auditability, embedded API ergonomics). Section 12 lists the specific claims each spike must validate.
+Reflects committed code through Phase 8 (integration hardening). The
+five subsystems described in §2 are all implemented; the file layout
+in §11 was updated 2026-05-12 to reflect the boot subsystem collapse
+(BootImage → Asm-based), the devices restructure (4 top-level groups
+with virtio/core/ and host/ subdirs), and Phase 7's `ingot-jailer`
+binary plus the `src/jailer/` primitives. Subsystem roles described
+in §2 are stable; sections 5-12 describe contracts that hold across
+the restructurings.
 
 ## 1. System overview
 
@@ -400,36 +407,55 @@ The layout splits **orchestration** from **primitives**:
 ```
 src/
   lib.rs                — public surface: re-exports only
-  vm.rs                 — orchestrator: Vm struct, new + run + run loop + state machine
-  config.rs             — Config + spec types
-  outcome.rs            — Outcome, ExitStatus, Telemetry, TransitionEvent
-  error.rs              — IngotError, HostError
-  memory.rs             — Memory (guest physical memory mapping)
-  state.rs              — State enum + transition function
+  lifecycle/            — orchestrator + value types it owns
+    mod.rs              — re-exports
+    vm.rs               — Vm orchestrator (validate, KVM setup, boot, run loop, state machine)
+    config.rs           — Config + spec types (BlockSpec, NetSpec, VsockSpec, StdoutSink)
+    outcome.rs          — Outcome, ExitStatus, GuestFaultReason, Telemetry, TransitionEvent
+    error.rs            — IngotError, HostError
+    memory.rs           — Memory (guest physical memory mapping)
+    state.rs            — State enum + State::transition method
   kvm/
-    mod.rs              — re-exports + KvmError + RegState + error helpers
-    ioctls.rs           — KVM ioctl request numbers (support file, not a primitive)
-    kvm_fd.rs           — KvmFd (handle to /dev/kvm)
-    vm_fd.rs            — VmFd (handle to a KVM VM)
-    vcpu_fd.rs          — VcpuFd (handle to a vCPU)
-    vcpu_exit.rs        — VcpuExit + decoder (support file)
+    mod.rs              — re-exports + RegState
+    error.rs            — KvmError + check_ioctl + last_errno
+    ioctls.rs           — KVM_* ioctl request numbers + ioc() helper
+    cpuid.rs            — Cpuid value type
+    kvm_fd.rs           — KvmFd (/dev/kvm handle, KvmFd::open_or_skip for cfg-test)
+    vm_fd.rs            — VmFd
+    vcpu_fd.rs          — VcpuFd + VcpuExit (the typed return shape of VcpuFd::run)
   boot/
-    mod.rs              — re-exports + Kernel value type + build_boot_params
-    elf_loader.rs       — ElfLoader
-    page_tables.rs      — PageTables
-    gdt.rs              — Gdt
-    boot_params.rs      — BootParams
-    initramfs.rs        — Initramfs
-    vcpu_primer.rs      — VcpuPrimer
+    mod.rs              — re-exports (Image, TSS_ADDR)
+    layout.rs           — every bringup address as constants + e820_entries
+    asm.rs              — Asm: byte assembler over guest memory (db/dw/dd/dq, b/w/d/q, org, here, cksum)
+    image.rs            — Image: phase-1 load_kernel + load_initramfs, phase-2 Asm-driven bringup
   devices/
-    mod.rs              — MmioDevice trait, GuestError, Interrupt
-    mmio_bus.rs         — MmioBus
-    uart.rs             — Uart + UartInput
-    block.rs            — Block (Phase 3 placeholder)
-    net.rs              — Net (Phase 4 placeholder)
-    vsock.rs            — Vsock (Phase 5 placeholder)
+    mod.rs              — Interrupt + GuestError (the bus's failure mode)
+    bus.rs              — Bus (MMIO + PIO routing) + MmioDevice/PioDevice traits
+    uart.rs             — Uart (8250, PIO 0x3F8, PioDevice impl)
+    cmos.rs             — Cmos (CMOS RTC PIO shim, PioDevice impl)
+    virtio/
+      mod.rs            — re-exports (Block, Net, Vsock)
+      core/
+        mod.rs          — virtio family infrastructure marker
+        mmio.rs         — VirtioMmio (shared register layout)
+        queue.rs        — VirtioQueue (shared split-virtqueue)
+      net.rs            — Net (virtio-net device class)
+      block.rs          — Block (virtio-block device class)
+      vsock.rs          — Vsock (virtio-vsock; vhost-kernel-backed)
+    host/
+      mod.rs            — re-exports (Tap, VhostVsock)
+      tap.rs            — TAP fd wrapper
+      vhost_vsock.rs    — /dev/vhost-vsock ioctl wrapper
+  jailer/
+    mod.rs              — jail_and_exec + JailConfig + re-exports (BindMount, Limits, Mode)
+    seccomp.rs          — in-process BPF allowlist (Mode::install)
+    cgroups.rs          — cgroups v2 setup (out-of-process)
+    namespaces.rs       — unshare + fork (out-of-process)
+    mount.rs            — bind mounts + pivot_root (out-of-process)
+    privilege.rs        — UID/GID drop + PR_SET_NO_NEW_PRIVS (out-of-process)
   bin/
-    ingot.rs            — CLI: thin wrapper over public API
+    ingot.rs            — CLI: thin wrapper over the library API
+    ingot-jailer.rs     — out-of-process isolation binary (cgroups+namespaces+mount+drop+execve)
 ```
 
 Phase 7 introduces `ingot-jailer` as a sibling crate. At that point the repository becomes a Cargo workspace with `ingot/` and `ingot-jailer/` as members. The jailer does not link `ingot`; it treats the VMM as an opaque binary it isolates and execs.
