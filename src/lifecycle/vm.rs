@@ -15,21 +15,16 @@ use std::os::fd::FromRawFd;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use crate::boot::{self, ElfLoader, Initramfs, Kernel, MpTable, VcpuPrimer};
+use crate::boot::{BootImage, TSS_ADDR};
 use crate::lifecycle::config::{Config, StdoutSink};
 use crate::devices::{Block, MmioBus, Net, Tap, Uart, UartInput, Vsock, COM1_BASE, COM1_GSI, COM1_LAST};
 use crate::lifecycle::error::{HostError, IngotError};
 use crate::kvm::{Cpuid, KvmError, KvmFd, VcpuExit, VcpuFd, VmFd};
 use crate::lifecycle::memory::Memory;
 use crate::lifecycle::outcome::{ExitStatus, GuestFaultReason, Outcome, Telemetry, TransitionEvent};
-use crate::lifecycle::state::{transition, State};
+use crate::lifecycle::state::State;
 
-const CMDLINE_ADDR: u64 = 0x2_0000;
 const CMDLINE_MAX: usize = 2048;
-const BOOT_PARAMS_ADDR: u64 = 0x7000;
-/// KVM's 3-page TSS region, placed in the high I/O hole below 4 GiB so it
-/// doesn't conflict with the userspace memory region or the MMIO bus.
-const TSS_ADDR: u32 = 0xfffb_d000;
 const MIN_MEMORY: u64 = 16 * 1024 * 1024;
 const PAGE_SIZE: u64 = 0x1000;
 /// CMOS RTC PIO ports. Index register selects which CMOS byte; data
@@ -157,30 +152,16 @@ impl Vm {
     }
 
     fn boot_kernel(&mut self) -> Result<(), IngotError> {
-        let kernel_bytes = std::fs::read(&self.config.kernel_path).map_err(|_| {
-            IngotError::Host(HostError::KernelImageNotReadable(self.config.kernel_path.clone()))
-        })?;
-        let kernel = ElfLoader::load(&kernel_bytes, &mut self.mem)?;
-        let initramfs = self.load_optional_initramfs(&kernel)?;
-        self.write_cmdline()?;
-        let bp = boot::build_boot_params(initramfs.as_ref(), CMDLINE_ADDR, CMDLINE_MAX, self.config.memory_bytes)?;
-        bp.write_to(BOOT_PARAMS_ADDR, &mut self.mem)?;
-        MpTable::write_to(self.config.vcpus, &mut self.mem)?;
-        let state = VcpuPrimer::prime(&kernel, BOOT_PARAMS_ADDR, &mut self.mem)?;
+        let state = BootImage::new(
+            &mut self.mem,
+            &self.config.kernel_path,
+            self.config.initramfs_path.as_deref(),
+            &self.config.cmdline,
+            self.config.vcpus,
+            self.config.memory_bytes,
+        ).install()?;
         self.vcpus[0].set_sregs(&state.sregs)?;
         self.vcpus[0].set_regs(&state.regs)?;
-        Ok(())
-    }
-
-    fn load_optional_initramfs(&mut self, kernel: &Kernel) -> Result<Option<Initramfs>, IngotError> {
-        let Some(p) = self.config.initramfs_path.clone() else { return Ok(None); };
-        let bytes = std::fs::read(&p).map_err(|_| IngotError::Host(HostError::InitramfsNotReadable(p)))?;
-        Ok(Some(Initramfs::load(&bytes, &mut self.mem, kernel)?))
-    }
-
-    fn write_cmdline(&mut self) -> Result<(), IngotError> {
-        self.mem.write(CMDLINE_ADDR, self.config.cmdline.as_bytes())?;
-        self.mem.write(CMDLINE_ADDR + self.config.cmdline.len() as u64, &[0])?;
         Ok(())
     }
 
@@ -252,7 +233,7 @@ impl Vm {
     }
 
     fn step(&mut self, to: State) -> Result<(), IngotError> {
-        let new = transition(self.state, to)
+        let new = self.state.transition(to)
             .map_err(|_| IngotError::Host(HostError::InvalidConfig("illegal state transition")))?;
         self.telemetry.transitions.push(TransitionEvent { at: Instant::now(), from: self.state, to: new });
         self.state = new;

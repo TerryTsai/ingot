@@ -18,21 +18,19 @@ pub(crate) struct IllegalTransition {
     pub to: State,
 }
 
-pub(crate) fn transition(from: State, to: State) -> Result<State, IllegalTransition> {
-    use State::*;
-    let ok = matches!(
-        (from, to),
-        (Configured, Initializing)
-            | (Initializing, Booting)
-            | (Booting, Running)
-            | (Running, Exiting)
-            | (Exiting, Terminated)
-            | (_, Failed)
-    );
-    if ok {
-        Ok(to)
-    } else {
-        Err(IllegalTransition { from, to })
+impl State {
+    pub(crate) fn transition(self, to: State) -> Result<State, IllegalTransition> {
+        use State::*;
+        let ok = matches!(
+            (self, to),
+            (Configured, Initializing)
+                | (Initializing, Booting)
+                | (Booting, Running)
+                | (Running, Exiting)
+                | (Exiting, Terminated)
+                | (_, Failed)
+        );
+        if ok { Ok(to) } else { Err(IllegalTransition { from: self, to }) }
     }
 }
 
@@ -42,24 +40,24 @@ mod tests {
 
     #[test]
     fn legal_path_through_states() {
-        let s = transition(State::Configured, State::Initializing).unwrap();
-        let s = transition(s, State::Booting).unwrap();
-        let s = transition(s, State::Running).unwrap();
-        let s = transition(s, State::Exiting).unwrap();
-        let _ = transition(s, State::Terminated).unwrap();
+        let s = State::Configured.transition(State::Initializing).unwrap();
+        let s = s.transition(State::Booting).unwrap();
+        let s = s.transition(State::Running).unwrap();
+        let s = s.transition(State::Exiting).unwrap();
+        let _ = s.transition(State::Terminated).unwrap();
     }
 
     #[test]
     fn failed_reachable_from_anywhere() {
-        transition(State::Configured, State::Failed).unwrap();
-        transition(State::Booting, State::Failed).unwrap();
-        transition(State::Running, State::Failed).unwrap();
+        State::Configured.transition(State::Failed).unwrap();
+        State::Booting.transition(State::Failed).unwrap();
+        State::Running.transition(State::Failed).unwrap();
     }
 
     #[test]
     fn illegal_transitions_rejected() {
-        assert!(transition(State::Configured, State::Running).is_err());
-        assert!(transition(State::Terminated, State::Initializing).is_err());
-        assert!(transition(State::Running, State::Booting).is_err());
+        assert!(State::Configured.transition(State::Running).is_err());
+        assert!(State::Terminated.transition(State::Initializing).is_err());
+        assert!(State::Running.transition(State::Booting).is_err());
     }
 }
