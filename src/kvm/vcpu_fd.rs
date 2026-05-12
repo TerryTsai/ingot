@@ -14,7 +14,7 @@ use super::ioctls::*;
 use super::KvmError;
 
 #[derive(Debug)]
-pub enum VcpuExit {
+pub(crate) enum VcpuExit {
     Hlt,
     Shutdown,
     MmioRead { addr: u64, len: usize },

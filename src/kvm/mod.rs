@@ -14,6 +14,6 @@ mod vm_fd;
 pub(crate) use cpuid::Cpuid;
 pub use error::KvmError;
 pub(crate) use kvm_fd::KvmFd;
-pub use vcpu_fd::VcpuExit;
+pub(crate) use vcpu_fd::VcpuExit;
 pub(crate) use vcpu_fd::VcpuFd;
 pub(crate) use vm_fd::VmFd;

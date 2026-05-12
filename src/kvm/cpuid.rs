@@ -4,7 +4,7 @@
 
 use kvm_bindings::kvm_cpuid_entry2;
 
-pub const MAX_CPUID_ENTRIES: usize = 256;
+const MAX_CPUID_ENTRIES: usize = 256;
 
 #[repr(C)]
 pub struct Cpuid {
