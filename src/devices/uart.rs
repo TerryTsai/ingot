@@ -1,19 +1,24 @@
-//! 8250 UART on COM1 (PIO 0x3F8). The 8250 register layout is the same
-//! over MMIO and PIO; PIO lets Linux's 8250 driver auto-detect COM1
-//! without DT/ACPI plumbing. The kernel uses IRQ 4 for COM1's tty path;
-//! polling-mode printk works without IRQs, but user-space writes do not.
+//! 8250 UART on COM1 (PIO 0x3F8). The 8250 register layout lets Linux's
+//! 8250 driver auto-detect COM1 without DT/ACPI plumbing. The kernel uses
+//! IRQ 4 for COM1's tty path; polling-mode printk works without IRQs, but
+//! user-space writes do not. Implements `PioDevice` so the bus routes
+//! port 0x3F8..0x3FF accesses to this device.
 
 use std::collections::VecDeque;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 
-const REG_RBR_THR_DLL: u8 = 0;
-const REG_IER_DLM: u8 = 1;
-const REG_IIR_FCR: u8 = 2;
-const REG_LCR: u8 = 3;
-const REG_MCR: u8 = 4;
-const REG_LSR: u8 = 5;
-const REG_SCR: u8 = 7;
+use super::bus::PioDevice;
+use super::Interrupt;
+
+// 8250 register offsets (relative to COM1_BASE)
+const REG_RBR_THR_DLL: u16 = 0;
+const REG_IER_DLM: u16 = 1;
+const REG_IIR_FCR: u16 = 2;
+const REG_LCR: u16 = 3;
+const REG_MCR: u16 = 4;
+const REG_LSR: u16 = 5;
+const REG_SCR: u16 = 7;
 
 const LCR_DLAB: u8 = 0x80;
 const LSR_READY_TX: u8 = 0x60;
@@ -25,7 +30,7 @@ const IER_RX: u8 = 0x01;
 const IER_TX: u8 = 0x02;
 
 pub(crate) const COM1_BASE: u16 = 0x3F8;
-pub(crate) const COM1_LAST: u16 = 0x3FF;
+pub(crate) const COM1_SIZE: u16 = 8;
 pub(crate) const COM1_GSI: u32 = 4;
 
 /// `rx_armed` gates RBR access until the driver writes IER with RX-
@@ -52,9 +57,7 @@ impl Uart {
 
     pub fn input_handle(&self) -> UartInput { UartInput(self.input.clone()) }
 
-    pub fn pending_irq(&self) -> bool { self.iir() != IIR_NONE }
-
-    pub fn read(&mut self, reg: u8) -> u8 {
+    fn read_register(&mut self, reg: u16) -> u8 {
         match reg {
             REG_RBR_THR_DLL if self.dlab() => self.dll,
             REG_RBR_THR_DLL if self.rx_armed => self.input.lock().unwrap().pop_front().unwrap_or(0),
@@ -70,7 +73,7 @@ impl Uart {
         }
     }
 
-    pub fn write(&mut self, reg: u8, v: u8) {
+    fn write_register(&mut self, reg: u16, v: u8) {
         match reg {
             REG_RBR_THR_DLL if self.dlab() => self.dll = v,
             REG_RBR_THR_DLL => { let _ = self.sink.write_all(&[v]); let _ = self.sink.flush(); }
@@ -98,6 +101,23 @@ impl Uart {
     }
 }
 
+impl PioDevice for Uart {
+    fn read(&mut self, port_offset: u16, data: &mut [u8]) {
+        let v = self.read_register(port_offset);
+        for b in data.iter_mut() { *b = v; }
+    }
+
+    fn write(&mut self, port_offset: u16, data: &[u8]) {
+        if let Some(&v) = data.first() {
+            self.write_register(port_offset, v);
+        }
+    }
+
+    fn pending_interrupt(&mut self) -> Option<Interrupt> {
+        if self.iir() != IIR_NONE { Some(Interrupt { gsi: COM1_GSI }) } else { None }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::io;
@@ -119,12 +139,18 @@ mod tests {
         (Box::new(Captured(buf.clone())), buf)
     }
 
+    fn read_byte(uart: &mut Uart, off: u16) -> u8 {
+        let mut b = [0u8; 1];
+        uart.read(off, &mut b);
+        b[0]
+    }
+
     #[test]
     fn thr_writes_go_to_sink() {
         let (sink, captured) = new_capture();
         let mut uart = Uart::new(sink);
-        uart.write(0, b'h');
-        uart.write(0, b'i');
+        uart.write(REG_RBR_THR_DLL, &[b'h']);
+        uart.write(REG_RBR_THR_DLL, &[b'i']);
         assert_eq!(*captured.lock().unwrap(), b"hi".to_vec());
     }
 
@@ -132,7 +158,7 @@ mod tests {
     fn lsr_reports_thr_empty() {
         let (sink, _) = new_capture();
         let mut uart = Uart::new(sink);
-        assert_eq!(uart.read(5) & 0x60, 0x60);
+        assert_eq!(read_byte(&mut uart, REG_LSR) & 0x60, 0x60);
     }
 
     #[test]
@@ -140,9 +166,9 @@ mod tests {
         let (sink, _) = new_capture();
         let mut uart = Uart::new(sink);
         uart.input_handle().push(b'q');
-        assert_eq!(uart.read(5) & 0x01, 0, "DR must stay clear pre-arm");
-        uart.write(1, IER_RX);
-        assert_eq!(uart.read(5) & 0x01, 0x01, "DR set once armed and queue non-empty");
+        assert_eq!(read_byte(&mut uart, REG_LSR) & 0x01, 0, "DR clear pre-arm");
+        uart.write(REG_IER_DLM, &[IER_RX]);
+        assert_eq!(read_byte(&mut uart, REG_LSR) & 0x01, 0x01, "DR set once armed");
     }
 
     #[test]
@@ -151,38 +177,39 @@ mod tests {
         let mut uart = Uart::new(sink);
         uart.input_handle().push(b'a');
         uart.input_handle().push(b'b');
-        assert_eq!(uart.read(0), 0);
-        assert_eq!(uart.read(0), 0);
-        uart.write(1, IER_RX);
-        assert_eq!(uart.read(0), b'a');
-        assert_eq!(uart.read(0), b'b');
-        assert_eq!(uart.read(0), 0);
+        assert_eq!(read_byte(&mut uart, REG_RBR_THR_DLL), 0);
+        assert_eq!(read_byte(&mut uart, REG_RBR_THR_DLL), 0);
+        uart.write(REG_IER_DLM, &[IER_RX]);
+        assert_eq!(read_byte(&mut uart, REG_RBR_THR_DLL), b'a');
+        assert_eq!(read_byte(&mut uart, REG_RBR_THR_DLL), b'b');
+        assert_eq!(read_byte(&mut uart, REG_RBR_THR_DLL), 0);
     }
 
     #[test]
     fn iir_reports_no_interrupt_when_disabled() {
         let (sink, _) = new_capture();
         let mut uart = Uart::new(sink);
-        assert_eq!(uart.read(2), IIR_NONE);
-        assert!(!uart.pending_irq());
+        assert_eq!(read_byte(&mut uart, REG_IIR_FCR), IIR_NONE);
+        assert!(uart.pending_interrupt().is_none());
     }
 
     #[test]
     fn iir_reports_thr_empty_when_tx_enabled() {
         let (sink, _) = new_capture();
         let mut uart = Uart::new(sink);
-        uart.write(1, IER_TX);
-        assert_eq!(uart.read(2), IIR_THR_EMPTY);
-        assert!(uart.pending_irq());
+        uart.write(REG_IER_DLM, &[IER_TX]);
+        assert_eq!(read_byte(&mut uart, REG_IIR_FCR), IIR_THR_EMPTY);
+        assert!(uart.pending_interrupt().is_some());
     }
 
     #[test]
     fn iir_reports_rx_data_when_rx_enabled_and_input_pending() {
         let (sink, _) = new_capture();
         let mut uart = Uart::new(sink);
-        uart.write(1, IER_RX);
+        uart.write(REG_IER_DLM, &[IER_RX]);
         uart.input_handle().push(b'x');
-        assert_eq!(uart.read(2), IIR_RX_DATA);
-        assert!(uart.pending_irq());
+        assert_eq!(read_byte(&mut uart, REG_IIR_FCR), IIR_RX_DATA);
+        let intr = uart.pending_interrupt().unwrap();
+        assert_eq!(intr.gsi, COM1_GSI);
     }
 }

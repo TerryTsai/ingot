@@ -21,24 +21,16 @@
 //!   MMIO 0xD000_2000     virtio-vsock  IRQ 7
 
 mod bus;
+mod cmos;
 mod host;
 mod uart;
 mod virtio;
 
-pub(crate) use bus::MmioBus;
+pub(crate) use bus::{Bus, MmioDevice};
+pub(crate) use cmos::Cmos;
 pub(crate) use host::Tap;
-pub(crate) use uart::{Uart, UartInput, COM1_BASE, COM1_GSI, COM1_LAST};
+pub(crate) use uart::{Uart, UartInput, COM1_BASE, COM1_SIZE};
 pub(crate) use virtio::{Block, Net, Vsock};
-
-pub(crate) trait MmioDevice: Send {
-    fn read(&mut self, offset: u64, data: &mut [u8]) -> Result<(), GuestError>;
-    fn write(&mut self, offset: u64, data: &[u8], mem: &mut crate::lifecycle::memory::Memory) -> Result<(), GuestError>;
-    fn pending_interrupt(&mut self) -> Option<Interrupt>;
-    /// Called after each vCPU exit. Devices with async I/O (TAP, AF_VSOCK)
-    /// drain their host-side fd here and stage RX into their virtqueues.
-    /// Default: no-op for synchronous-only devices.
-    fn poll_io(&mut self, _mem: &mut crate::lifecycle::memory::Memory) -> Result<(), GuestError> { Ok(()) }
-}
 
 pub(crate) struct Interrupt {
     pub gsi: u32,

@@ -1,72 +1,148 @@
-//! MMIO bus: maps `(base, size)` regions to `MmioDevice` handles and
-//! dispatches reads/writes from the orchestrator's run loop.
+//! Address-range bus. Routes guest reads/writes to whichever device
+//! claims the address. Two route tables: one for MMIO ranges (u64
+//! addresses, devices implementing `MmioDevice`), one for PIO ranges
+//! (u16 ports, devices implementing `PioDevice`). The orchestrator's
+//! run loop dispatches every MMIO/PIO exit through this bus.
 
 use crate::lifecycle::error::HostError;
+use crate::lifecycle::memory::Memory;
 
-use super::{GuestError, Interrupt, MmioDevice};
+use super::{GuestError, Interrupt};
 
-struct Region {
+/// Memory-mapped device contract. Implementors are reachable through the
+/// bus's MMIO table at some `(base, size)` range; reads/writes arrive as
+/// offsets into that range. `poll_io` runs after each vCPU exit for
+/// devices with async host I/O (TAP, vhost call eventfds).
+pub(crate) trait MmioDevice: Send {
+    fn read(&mut self, offset: u64, data: &mut [u8]) -> Result<(), GuestError>;
+    fn write(&mut self, offset: u64, data: &[u8], mem: &mut Memory) -> Result<(), GuestError>;
+    fn pending_interrupt(&mut self) -> Option<Interrupt>;
+    fn poll_io(&mut self, _mem: &mut Memory) -> Result<(), GuestError> { Ok(()) }
+}
+
+/// Port-I/O device contract. Implementors are reachable through the
+/// bus's PIO table at some `(base, size)` range; reads/writes arrive
+/// as offsets. PIO is x86-only and used here for the legacy 8250 UART
+/// and the CMOS RTC shim. No async I/O — PIO devices respond
+/// synchronously.
+pub(crate) trait PioDevice: Send {
+    fn read(&mut self, port_offset: u16, data: &mut [u8]);
+    fn write(&mut self, port_offset: u16, data: &[u8]);
+    fn pending_interrupt(&mut self) -> Option<Interrupt> { None }
+}
+
+struct MmioRegion {
     base: u64,
     size: u64,
     device: Box<dyn MmioDevice>,
 }
 
-pub(crate) struct MmioBus {
-    regions: Vec<Region>,
+struct PioRegion {
+    base: u16,
+    size: u16,
+    device: Box<dyn PioDevice>,
 }
 
-impl MmioBus {
+pub(crate) struct Bus {
+    mmio: Vec<MmioRegion>,
+    pio: Vec<PioRegion>,
+}
+
+impl Bus {
     pub fn new() -> Self {
-        MmioBus { regions: Vec::new() }
+        Bus { mmio: Vec::new(), pio: Vec::new() }
     }
 
-    pub fn register(&mut self, base: u64, size: u64, device: Box<dyn MmioDevice>) -> Result<(), HostError> {
-        for r in &self.regions {
+    // ── MMIO ────────────────────────────────────────────────────────────
+
+    pub fn register_mmio(&mut self, base: u64, size: u64, device: Box<dyn MmioDevice>) -> Result<(), HostError> {
+        for r in &self.mmio {
             if base < r.base + r.size && r.base < base + size {
                 return Err(HostError::InvalidConfig("MMIO region overlap"));
             }
         }
-        self.regions.push(Region { base, size, device });
+        self.mmio.push(MmioRegion { base, size, device });
         Ok(())
     }
 
-    pub fn read(&mut self, addr: u64, data: &mut [u8]) -> Result<(), GuestError> {
-        let region = self.find(addr, data.len())?;
+    pub fn read_mmio(&mut self, addr: u64, data: &mut [u8]) -> Result<(), GuestError> {
+        let region = self.find_mmio(addr, data.len())?;
         let offset = addr - region.base;
         region.device.read(offset, data)
     }
 
-    pub fn write(&mut self, addr: u64, data: &[u8], mem: &mut crate::lifecycle::memory::Memory) -> Result<(), GuestError> {
-        let region = self.find(addr, data.len())?;
+    pub fn write_mmio(&mut self, addr: u64, data: &[u8], mem: &mut Memory) -> Result<(), GuestError> {
+        let region = self.find_mmio(addr, data.len())?;
         let offset = addr - region.base;
         region.device.write(offset, data, mem)
     }
 
-    pub fn pending_interrupts(&mut self) -> Vec<(u64, Interrupt)> {
-        let mut out = Vec::new();
-        for r in &mut self.regions {
-            if let Some(intr) = r.device.pending_interrupt() {
-                out.push((r.base, intr));
+    // ── PIO ─────────────────────────────────────────────────────────────
+
+    pub fn register_pio(&mut self, base: u16, size: u16, device: Box<dyn PioDevice>) -> Result<(), HostError> {
+        for r in &self.pio {
+            if base < r.base + r.size && r.base < base + size {
+                return Err(HostError::InvalidConfig("PIO region overlap"));
             }
+        }
+        self.pio.push(PioRegion { base, size, device });
+        Ok(())
+    }
+
+    /// Read from a PIO port. Unrouted ports return all-0xFF, matching the
+    /// PC convention for absent hardware.
+    pub fn read_pio(&mut self, port: u16, data: &mut [u8]) {
+        if let Some(r) = self.find_pio(port, data.len() as u16) {
+            r.device.read(port - r.base, data);
+        } else {
+            for b in data.iter_mut() { *b = 0xFF; }
+        }
+    }
+
+    /// Write to a PIO port. Unrouted ports drop the write silently.
+    pub fn write_pio(&mut self, port: u16, data: &[u8]) {
+        if let Some(r) = self.find_pio(port, data.len() as u16) {
+            r.device.write(port - r.base, data);
+        }
+    }
+
+    // ── interrupts + async polling ──────────────────────────────────────
+
+    pub fn pending_interrupts(&mut self) -> Vec<Interrupt> {
+        let mut out = Vec::new();
+        for r in &mut self.mmio {
+            if let Some(intr) = r.device.pending_interrupt() { out.push(intr); }
+        }
+        for r in &mut self.pio {
+            if let Some(intr) = r.device.pending_interrupt() { out.push(intr); }
         }
         out
     }
 
-    pub fn poll_io(&mut self, mem: &mut crate::lifecycle::memory::Memory) -> Result<(), GuestError> {
-        for r in &mut self.regions {
+    pub fn poll_io(&mut self, mem: &mut Memory) -> Result<(), GuestError> {
+        for r in &mut self.mmio {
             r.device.poll_io(mem)?;
         }
         Ok(())
     }
 
-    fn find(&mut self, addr: u64, len: usize) -> Result<&mut Region, GuestError> {
+    fn find_mmio(&mut self, addr: u64, len: usize) -> Result<&mut MmioRegion, GuestError> {
         let len = len as u64;
-        for r in &mut self.regions {
+        for r in &mut self.mmio {
             if addr >= r.base && addr.saturating_add(len) <= r.base + r.size {
                 return Ok(r);
             }
         }
         Err(GuestError::MmioOutOfRange { addr })
+    }
+
+    fn find_pio(&mut self, port: u16, len: u16) -> Option<&mut PioRegion> {
+        for r in &mut self.pio {
+            if port >= r.base && port.saturating_add(len) <= r.base + r.size {
+                return Some(r);
+            }
+        }
+        None
     }
 }
 
@@ -77,29 +153,29 @@ mod tests {
 
     use super::*;
 
-    struct Counter {
+    struct MmioCounter {
         reads: Arc<AtomicU32>,
         writes: Arc<AtomicU32>,
         last_offset: Arc<AtomicU32>,
     }
 
-    impl Counter {
+    impl MmioCounter {
         fn new() -> (Self, Arc<AtomicU32>, Arc<AtomicU32>, Arc<AtomicU32>) {
             let r = Arc::new(AtomicU32::new(0));
             let w = Arc::new(AtomicU32::new(0));
             let o = Arc::new(AtomicU32::new(0));
-            (Counter { reads: r.clone(), writes: w.clone(), last_offset: o.clone() }, r, w, o)
+            (MmioCounter { reads: r.clone(), writes: w.clone(), last_offset: o.clone() }, r, w, o)
         }
     }
 
-    impl MmioDevice for Counter {
+    impl MmioDevice for MmioCounter {
         fn read(&mut self, offset: u64, data: &mut [u8]) -> Result<(), GuestError> {
             self.reads.fetch_add(1, Ordering::SeqCst);
             self.last_offset.store(offset as u32, Ordering::SeqCst);
             for b in data.iter_mut() { *b = 0xAB; }
             Ok(())
         }
-        fn write(&mut self, offset: u64, _data: &[u8], _mem: &mut crate::lifecycle::memory::Memory) -> Result<(), GuestError> {
+        fn write(&mut self, offset: u64, _data: &[u8], _mem: &mut Memory) -> Result<(), GuestError> {
             self.writes.fetch_add(1, Ordering::SeqCst);
             self.last_offset.store(offset as u32, Ordering::SeqCst);
             Ok(())
@@ -107,19 +183,44 @@ mod tests {
         fn pending_interrupt(&mut self) -> Option<Interrupt> { None }
     }
 
-    fn mem() -> crate::lifecycle::memory::Memory {
-        crate::lifecycle::memory::Memory::new(0x10_0000).expect("mem")
+    struct PioCounter {
+        reads: Arc<AtomicU32>,
+        writes: Arc<AtomicU32>,
+        last_offset: Arc<AtomicU32>,
     }
 
+    impl PioCounter {
+        fn new() -> (Self, Arc<AtomicU32>, Arc<AtomicU32>, Arc<AtomicU32>) {
+            let r = Arc::new(AtomicU32::new(0));
+            let w = Arc::new(AtomicU32::new(0));
+            let o = Arc::new(AtomicU32::new(0));
+            (PioCounter { reads: r.clone(), writes: w.clone(), last_offset: o.clone() }, r, w, o)
+        }
+    }
+
+    impl PioDevice for PioCounter {
+        fn read(&mut self, port_offset: u16, data: &mut [u8]) {
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            self.last_offset.store(port_offset as u32, Ordering::SeqCst);
+            for b in data.iter_mut() { *b = 0x77; }
+        }
+        fn write(&mut self, port_offset: u16, _data: &[u8]) {
+            self.writes.fetch_add(1, Ordering::SeqCst);
+            self.last_offset.store(port_offset as u32, Ordering::SeqCst);
+        }
+    }
+
+    fn mem() -> Memory { Memory::new(0x10_0000).expect("mem") }
+
     #[test]
-    fn dispatches_to_registered_device() {
-        let mut bus = MmioBus::new();
+    fn mmio_dispatches_to_registered_device() {
+        let mut bus = Bus::new();
         let mut m = mem();
-        let (dev, reads, writes, last) = Counter::new();
-        bus.register(0xD000_0000, 0x1000, Box::new(dev)).unwrap();
-        bus.write(0xD000_0003, &[0x42], &mut m).unwrap();
+        let (dev, reads, writes, last) = MmioCounter::new();
+        bus.register_mmio(0xD000_0000, 0x1000, Box::new(dev)).unwrap();
+        bus.write_mmio(0xD000_0003, &[0x42], &mut m).unwrap();
         let mut buf = [0u8; 1];
-        bus.read(0xD000_0005, &mut buf).unwrap();
+        bus.read_mmio(0xD000_0005, &mut buf).unwrap();
         assert_eq!(writes.load(Ordering::SeqCst), 1);
         assert_eq!(reads.load(Ordering::SeqCst), 1);
         assert_eq!(last.load(Ordering::SeqCst), 5);
@@ -127,35 +228,52 @@ mod tests {
     }
 
     #[test]
-    fn rejects_overlap_on_register() {
-        let mut bus = MmioBus::new();
-        let (a, _, _, _) = Counter::new();
-        let (b, _, _, _) = Counter::new();
-        bus.register(0xD000_0000, 0x1000, Box::new(a)).unwrap();
-        assert!(bus.register(0xD000_0800, 0x1000, Box::new(b)).is_err());
+    fn mmio_rejects_overlap_on_register() {
+        let mut bus = Bus::new();
+        let (a, _, _, _) = MmioCounter::new();
+        let (b, _, _, _) = MmioCounter::new();
+        bus.register_mmio(0xD000_0000, 0x1000, Box::new(a)).unwrap();
+        assert!(bus.register_mmio(0xD000_0800, 0x1000, Box::new(b)).is_err());
     }
 
     #[test]
-    fn rejects_address_outside_any_region() {
-        let mut bus = MmioBus::new();
+    fn mmio_rejects_address_outside_any_region() {
+        let mut bus = Bus::new();
         let mut m = mem();
-        let (dev, _, _, _) = Counter::new();
-        bus.register(0xD000_0000, 0x1000, Box::new(dev)).unwrap();
-        assert!(bus.write(0xD000_2000, &[0x01], &mut m).is_err());
+        let (dev, _, _, _) = MmioCounter::new();
+        bus.register_mmio(0xD000_0000, 0x1000, Box::new(dev)).unwrap();
+        assert!(bus.write_mmio(0xD000_2000, &[0x01], &mut m).is_err());
     }
 
     #[test]
-    fn dispatches_among_multiple_devices() {
-        let mut bus = MmioBus::new();
-        let (a, ar, _, _) = Counter::new();
-        let (b, br, _, _) = Counter::new();
-        bus.register(0xD000_0000, 0x1000, Box::new(a)).unwrap();
-        bus.register(0xD000_2000, 0x1000, Box::new(b)).unwrap();
+    fn pio_dispatches_to_registered_device() {
+        let mut bus = Bus::new();
+        let (dev, reads, writes, last) = PioCounter::new();
+        bus.register_pio(0x3F8, 8, Box::new(dev)).unwrap();
+        bus.write_pio(0x3F9, &[0x42]);
         let mut buf = [0u8; 1];
-        bus.read(0xD000_0010, &mut buf).unwrap();
-        bus.read(0xD000_2020, &mut buf).unwrap();
-        bus.read(0xD000_2024, &mut buf).unwrap();
-        assert_eq!(ar.load(Ordering::SeqCst), 1);
-        assert_eq!(br.load(Ordering::SeqCst), 2);
+        bus.read_pio(0x3FA, &mut buf);
+        assert_eq!(writes.load(Ordering::SeqCst), 1);
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
+        assert_eq!(last.load(Ordering::SeqCst), 2);
+        assert_eq!(buf[0], 0x77);
+    }
+
+    #[test]
+    fn pio_returns_ff_for_unrouted_port() {
+        let mut bus = Bus::new();
+        let mut buf = [0u8; 1];
+        bus.read_pio(0x80, &mut buf);
+        assert_eq!(buf[0], 0xFF);
+        bus.write_pio(0x80, &[0x00]); // dropped, no panic
+    }
+
+    #[test]
+    fn pio_rejects_overlap_on_register() {
+        let mut bus = Bus::new();
+        let (a, _, _, _) = PioCounter::new();
+        let (b, _, _, _) = PioCounter::new();
+        bus.register_pio(0x3F8, 8, Box::new(a)).unwrap();
+        assert!(bus.register_pio(0x3FC, 4, Box::new(b)).is_err());
     }
 }

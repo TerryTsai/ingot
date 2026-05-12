@@ -17,7 +17,7 @@ use std::time::Instant;
 
 use crate::boot::{Image, TSS_ADDR};
 use crate::lifecycle::config::{Config, StdoutSink};
-use crate::devices::{Block, MmioBus, Net, Tap, Uart, UartInput, Vsock, COM1_BASE, COM1_GSI, COM1_LAST};
+use crate::devices::{Block, Bus, Cmos, Net, Tap, Uart, UartInput, Vsock, COM1_BASE, COM1_SIZE};
 use crate::lifecycle::error::{HostError, IngotError};
 use crate::kvm::{Cpuid, KvmError, KvmFd, VcpuExit, VcpuFd, VmFd};
 use crate::lifecycle::memory::Memory;
@@ -27,12 +27,6 @@ use crate::lifecycle::state::State;
 const CMDLINE_MAX: usize = 2048;
 const MIN_MEMORY: u64 = 16 * 1024 * 1024;
 const PAGE_SIZE: u64 = 0x1000;
-/// CMOS RTC PIO ports. Index register selects which CMOS byte; data
-/// register reads/writes it. The kernel's `read_persistent_clock` and
-/// TSC calibration both poke these; returning 0xFF for data would set
-/// CMOS Status A's "Update In Progress" bit and hang the kernel.
-const CMOS_INDEX: u16 = 0x70;
-const CMOS_DATA: u16 = 0x71;
 /// virtio-mmio device regions: 4 KiB each, kernel learns of them via
 /// `virtio_mmio.device=4K@<addr>:<irq>` cmdline params. IRQs 5/6/7
 /// stay clear of legacy ISA assignments (timer=0, UART=4, RTC=8).
@@ -55,14 +49,12 @@ pub struct Vm {
     config: Config,
     state: State,
     telemetry: Telemetry,
-    bus: MmioBus,
-    uart: Uart,
+    bus: Bus,
     vcpus: Vec<VcpuFd>,
     vm_fd: VmFd,
     mem: Memory,
     captured_stdout: Captured,
     first_output: FirstOutput,
-    cmos_index: u8,
     _kvm: KvmFd,
 }
 
@@ -100,28 +92,28 @@ impl Vm {
         let cpuid = kvm.supported_cpuid()?;
         let vcpus = Self::make_vcpus(&vm_fd, config.vcpus, &cpuid)?;
         let (uart, captured_stdout, first_output) = Self::make_uart(&config)?;
-        let mut bus = MmioBus::new();
+        let mut bus = Bus::new();
+        bus.register_pio(COM1_BASE, COM1_SIZE, Box::new(uart))?;
+        bus.register_pio(Cmos::BASE, Cmos::SIZE, Box::new(Cmos::new()))?;
         let tap = config.tap_name.as_deref().map(Tap::open).transpose()?;
-        bus.register(VIRTIO_NET_BASE, VIRTIO_NET_SIZE, Box::new(Net::new(VIRTIO_NET_MAC, tap)))?;
+        bus.register_mmio(VIRTIO_NET_BASE, VIRTIO_NET_SIZE, Box::new(Net::new(VIRTIO_NET_MAC, tap)))?;
         if let Some(spec) = &config.rootfs {
             let blk = Block::new(&spec.path, spec.readonly)?;
-            bus.register(VIRTIO_BLK_BASE, VIRTIO_BLK_SIZE, Box::new(blk))?;
+            bus.register_mmio(VIRTIO_BLK_BASE, VIRTIO_BLK_SIZE, Box::new(blk))?;
         }
         if let Some(spec) = &config.vsock {
             let v = Vsock::new(spec.guest_cid as u64, config.memory_bytes, mem.host_ptr() as u64)?;
-            bus.register(VIRTIO_VSOCK_BASE, VIRTIO_VSOCK_SIZE, Box::new(v))?;
+            bus.register_mmio(VIRTIO_VSOCK_BASE, VIRTIO_VSOCK_SIZE, Box::new(v))?;
         }
         Ok(Vm {
             telemetry: Self::fresh_telemetry(),
             state: State::Configured,
             bus,
-            uart,
             vcpus,
             vm_fd,
             mem,
             captured_stdout,
             first_output,
-            cmos_index: 0,
             config,
             _kvm: kvm,
         })
@@ -166,36 +158,31 @@ impl Vm {
     }
 
     fn run_loop(&mut self) -> Result<ExitStatus, IngotError> {
-        let mut uart_irq = false;
-        let mut bus_gsis: Vec<u32> = Vec::new();
+        let mut asserted: Vec<u32> = Vec::new();
         Self::install_wakeup_timer();
         loop {
             match self.vcpus[0].run()? {
                 VcpuExit::Hlt => return Ok(ExitStatus::Halted),
                 VcpuExit::Shutdown => return Ok(ExitStatus::GuestFault(GuestFaultReason::TripleFault)),
                 VcpuExit::MmioRead { addr, len } => self.handle_mmio_read(addr, len)?,
-                VcpuExit::MmioWrite { addr, data, len } => self.bus.write(addr, &data[..len], &mut self.mem)?,
+                VcpuExit::MmioWrite { addr, data, len } => self.bus.write_mmio(addr, &data[..len], &mut self.mem)?,
                 VcpuExit::IoIn { port, len } => self.handle_pio_in(port, len),
-                VcpuExit::IoOut { port, data, len } => self.handle_pio_out(port, &data[..len]),
+                VcpuExit::IoOut { port, data, len } => self.bus.write_pio(port, &data[..len]),
                 VcpuExit::Intr => {}
                 VcpuExit::Other(r) => return Err(IngotError::Kvm(KvmError::UnhandledExit(r))),
             }
-            let now = self.uart.pending_irq();
-            if now != uart_irq {
-                self.vm_fd.set_irq_line(COM1_GSI, now as u32)?;
-                uart_irq = now;
-            }
             self.bus.poll_io(&mut self.mem)?;
-            self.reconcile_bus_irqs(&mut bus_gsis)?;
+            self.reconcile_bus_irqs(&mut asserted)?;
         }
     }
 
     /// Compare the bus's currently-pending GSIs against the set last
     /// driven high and drive each transition exactly once. Edge-triggered
     /// IOAPIC IRQs would otherwise refire every loop iteration; level-
-    /// triggered ones would be re-asserted needlessly.
+    /// triggered ones would be re-asserted needlessly. Covers both MMIO
+    /// (virtio devices) and PIO (UART) since the bus polls both.
     fn reconcile_bus_irqs(&mut self, asserted: &mut Vec<u32>) -> Result<(), IngotError> {
-        let pending: Vec<u32> = self.bus.pending_interrupts().into_iter().map(|(_, i)| i.gsi).collect();
+        let pending: Vec<u32> = self.bus.pending_interrupts().into_iter().map(|i| i.gsi).collect();
         for gsi in asserted.iter() {
             if !pending.contains(gsi) { self.vm_fd.set_irq_line(*gsi, 0)?; }
         }
@@ -208,28 +195,16 @@ impl Vm {
 
     fn handle_mmio_read(&mut self, addr: u64, len: usize) -> Result<(), IngotError> {
         let mut buf = [0u8; 8];
-        self.bus.read(addr, &mut buf[..len])?;
+        self.bus.read_mmio(addr, &mut buf[..len])?;
         self.vcpus[0].set_mmio_read_data(&buf[..len]);
         Ok(())
     }
 
     fn handle_pio_in(&mut self, port: u16, len: usize) {
-        let value = match port {
-            CMOS_DATA => Self::cmos_read(self.cmos_index),
-            COM1_BASE..=COM1_LAST => self.uart.read((port - COM1_BASE) as u8),
-            _ => 0xFF,
-        };
-        let bytes = [value, 0xFF, 0xFF, 0xFF];
-        self.vcpus[0].set_pio_read_data(&bytes[..len.min(4)]);
-    }
-
-    fn handle_pio_out(&mut self, port: u16, data: &[u8]) {
-        if data.is_empty() { return; }
-        match port {
-            CMOS_INDEX => self.cmos_index = data[0] & 0x7F,
-            COM1_BASE..=COM1_LAST => self.uart.write((port - COM1_BASE) as u8, data[0]),
-            _ => {}
-        }
+        let mut buf = [0u8; 4];
+        let n = len.min(4);
+        self.bus.read_pio(port, &mut buf[..n]);
+        self.vcpus[0].set_pio_read_data(&buf[..n]);
     }
 
     fn step(&mut self, to: State) -> Result<(), IngotError> {
