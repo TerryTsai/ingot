@@ -11,9 +11,9 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
-use super::virtio_mmio::{VirtioMmio, CONFIG_BASE, INT_USED_RING, VENDOR_ID, VIRTIO_F_VERSION_1};
-use super::virtio_queue::{Desc, DESC_F_NEXT, DESC_F_WRITE};
-use super::{GuestError, Interrupt, MmioDevice};
+use super::core::mmio::{VirtioMmio, CONFIG_BASE, INT_USED_RING, VENDOR_ID, VIRTIO_F_VERSION_1};
+use super::core::queue::{Desc, DESC_F_NEXT, DESC_F_WRITE};
+use crate::devices::{GuestError, Interrupt, MmioDevice};
 use crate::lifecycle::error::HostError;
 use crate::lifecycle::memory::Memory;
 

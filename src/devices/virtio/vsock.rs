@@ -7,9 +7,9 @@
 
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 
-use super::vhost_vsock::{VhostVsock, VringConfig};
-use super::virtio_mmio::{VirtioMmio, CONFIG_BASE, INT_USED_RING, VENDOR_ID, VIRTIO_F_VERSION_1};
-use super::{GuestError, Interrupt, MmioDevice};
+use super::core::mmio::{VirtioMmio, CONFIG_BASE, INT_USED_RING, VENDOR_ID, VIRTIO_F_VERSION_1};
+use crate::devices::host::{VhostVsock, VringConfig};
+use crate::devices::{GuestError, Interrupt, MmioDevice};
 use crate::lifecycle::error::HostError;
 use crate::lifecycle::memory::Memory;
 

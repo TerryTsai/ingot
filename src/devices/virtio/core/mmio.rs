@@ -3,23 +3,23 @@
 //! interrupt status. Device-class-specific behavior (config space,
 //! queue draining) lives in the device file that owns this transport.
 
-use super::virtio_queue::VirtioQueue;
+use super::queue::VirtioQueue;
 
 const MAGIC_VALUE: u32 = 0x7472_6976;
 const VERSION: u32 = 2;
 
 /// Bit 32 of the device features word: VIRTIO_F_VERSION_1. Required by
 /// every modern (1.0+) virtio device.
-pub(super) const VIRTIO_F_VERSION_1: u64 = 1 << 32;
+pub(in crate::devices::virtio) const VIRTIO_F_VERSION_1: u64 = 1 << 32;
 /// Our "INGO" vendor ID. Not a registered virtio vendor — purely
 /// cosmetic, shows up in `/sys/bus/virtio/devices/.../vendor`.
-pub(super) const VENDOR_ID: u32 = 0x494E_474F;
+pub(in crate::devices::virtio) const VENDOR_ID: u32 = 0x494E_474F;
 /// First byte of the device-specific config space, per virtio 1.x
 /// §4.2.2. MMIO offsets 0x000–0x0fc are the common transport regs.
-pub(super) const CONFIG_BASE: u64 = 0x100;
+pub(in crate::devices::virtio) const CONFIG_BASE: u64 = 0x100;
 /// InterruptStatus bit 0: "used ring updated". The driver reads this
 /// in its IRQ handler and ACKs by writing the same bit to 0x064.
-pub(super) const INT_USED_RING: u32 = 1;
+pub(in crate::devices::virtio) const INT_USED_RING: u32 = 1;
 
 pub(crate) struct VirtioMmio {
     pub device_id: u32,

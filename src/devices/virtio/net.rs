@@ -4,9 +4,9 @@
 //! to the TAP fd. `drain_rx` does the inverse on non-blocking TAP reads:
 //! prefix a zeroed vnet_hdr, scatter into the next free RX chain.
 
-use super::tap::Tap;
-use super::virtio_mmio::{VirtioMmio, CONFIG_BASE, INT_USED_RING, VENDOR_ID, VIRTIO_F_VERSION_1};
-use super::{GuestError, Interrupt, MmioDevice};
+use super::core::mmio::{VirtioMmio, CONFIG_BASE, INT_USED_RING, VENDOR_ID, VIRTIO_F_VERSION_1};
+use crate::devices::host::Tap;
+use crate::devices::{GuestError, Interrupt, MmioDevice};
 use crate::lifecycle::memory::Memory;
 
 const DEVICE_ID_NET: u32 = 1;

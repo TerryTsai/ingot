@@ -5,7 +5,7 @@
 //! descriptors, capping iteration at the queue size so a cyclic chain
 //! returns `DescriptorChainCycle` instead of looping forever.
 
-use super::GuestError;
+use crate::devices::GuestError;
 use crate::lifecycle::memory::Memory;
 
 const QUEUE_NUM_MAX: u32 = 256;
