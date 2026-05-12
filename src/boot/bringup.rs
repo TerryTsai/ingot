@@ -13,7 +13,7 @@
 //! in `boot::install`, where this is one step.
 
 use crate::lifecycle::error::HostError;
-use crate::lifecycle::memory::Memory;
+use crate::lifecycle::support::memory::Memory;
 
 use super::asm::Asm;
 use super::layout::{

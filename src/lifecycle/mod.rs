@@ -6,9 +6,9 @@
 
 mod config;
 pub(crate) mod error;
-pub(crate) mod memory;
 mod outcome;
 pub(crate) mod state;
+pub(crate) mod support;
 mod vm;
 
 pub use config::{BlockSpec, Config, NetSpec, StdoutSink, VsockSpec};

@@ -11,7 +11,7 @@ use super::core::mmio::{VirtioMmio, CONFIG_BASE, INT_USED_RING, VENDOR_ID, VIRTI
 use crate::devices::host::{VhostVsock, VringConfig};
 use crate::devices::{GuestError, Interrupt, MmioDevice};
 use crate::lifecycle::error::HostError;
-use crate::lifecycle::memory::Memory;
+use crate::lifecycle::support::memory::Memory;
 
 const DEVICE_ID_VSOCK: u32 = 19;
 const VIRTIO_VSOCK_GSI: u32 = 7;

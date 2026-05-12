@@ -23,7 +23,7 @@ mod registers;
 use std::path::Path;
 
 use crate::lifecycle::error::HostError;
-use crate::lifecycle::memory::Memory;
+use crate::lifecycle::support::memory::Memory;
 
 use loaders::{Initramfs, Kernel};
 

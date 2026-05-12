@@ -1,32 +1,31 @@
 //! Vm — the orchestrator. Reads top-to-bottom:
 //!
-//!   Vm::new           construct: validate, /dev/kvm, memory, vCPUs, MMIO bus
-//!   Vm::run           drive lifecycle: boot kernel, run loop, build outcome
-//!   boot_kernel       load ELF, write cmdline + boot_params, prime vCPU
-//!   run_loop          dispatch MMIO / PIO / Hlt / Shutdown
-//!   step              state-machine transition + telemetry recording
+//!   Construction: Vm::new + make_vcpus + fresh_telemetry
+//!   Execution:    Vm::run → boot_kernel + run_loop
+//!   Dispatch:     reconcile_bus_irqs + handle_mmio_read + handle_pio_in
+//!   State:        step (state-machine transition + telemetry)
 //!
-//! Subsystem directories (kvm/, boot/, devices/) provide primitives.
-//! This file composes them.
+//! Internal mechanics live in support/:
+//!   memory.rs       guest physical memory
+//!   stdio.rs        UART host-side I/O (sinks + stdin pump)
+//!   wakeup_timer.rs SIGALRM-driven KVM_RUN wakeup
+//!
+//! Subsystem directories (kvm/, boot/, devices/, jailer/) provide
+//! primitives this file composes.
 
-use std::fs::File;
-use std::io::{self, Read, Write};
-use std::os::fd::FromRawFd;
-use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crate::boot::{self, TSS_ADDR};
-use crate::lifecycle::config::{Config, StdoutSink};
-use crate::devices::{Block, Bus, Cmos, Net, Tap, Uart, UartInput, Vsock, COM1_BASE, COM1_SIZE};
-use crate::lifecycle::error::{HostError, IngotError};
+use crate::devices::{Block, Bus, Cmos, Net, Tap, Vsock, COM1_BASE, COM1_SIZE};
 use crate::kvm::{self, Cpuid, KvmError, VcpuExit, Vcpu};
-use crate::lifecycle::memory::Memory;
+use crate::lifecycle::config::Config;
+use crate::lifecycle::error::{HostError, IngotError};
 use crate::lifecycle::outcome::{ExitStatus, GuestFaultReason, Outcome, Telemetry, TransitionEvent};
 use crate::lifecycle::state::State;
+use crate::lifecycle::support::memory::Memory;
+use crate::lifecycle::support::stdio::{self, Captured, FirstOutput};
+use crate::lifecycle::support::wakeup_timer;
 
-const CMDLINE_MAX: usize = 2048;
-const MIN_MEMORY: u64 = 16 * 1024 * 1024;
-const PAGE_SIZE: u64 = 0x1000;
 /// virtio-mmio device regions: 4 KiB each, kernel learns of them via
 /// `virtio_mmio.device=4K@<addr>:<irq>` cmdline params. IRQs 5/6/7
 /// stay clear of legacy ISA assignments (timer=0, UART=4, RTC=8).
@@ -37,9 +36,6 @@ const VIRTIO_BLK_BASE: u64 = 0xD000_1000;
 const VIRTIO_BLK_SIZE: u64 = 0x1000;
 const VIRTIO_VSOCK_BASE: u64 = 0xD000_2000;
 const VIRTIO_VSOCK_SIZE: u64 = 0x1000;
-
-type Captured = Option<Arc<Mutex<Vec<u8>>>>;
-type FirstOutput = Arc<Mutex<Option<Instant>>>;
 
 /// A configured microVM, ready to run. Construct with [`Vm::new`] and
 /// consume with [`Vm::run`]. The library API is two methods because the
@@ -81,7 +77,7 @@ impl Vm {
     /// # Ok::<(), ingot::IngotError>(())
     /// ```
     pub fn new(config: Config) -> Result<Self, IngotError> {
-        Self::validate(&config)?;
+        config.validate()?;
         let kvm = kvm::Kvm::open()?;
         let kvm_vm = kvm.create_vm()?;
         let mem = Memory::new(config.memory_bytes)?;
@@ -91,7 +87,7 @@ impl Vm {
         kvm_vm.create_pit2()?;
         let cpuid = kvm.supported_cpuid()?;
         let vcpus = Self::make_vcpus(&kvm_vm, config.vcpus, &cpuid)?;
-        let (uart, captured_stdout, first_output) = Self::make_uart(&config)?;
+        let (uart, captured_stdout, first_output) = stdio::build_uart(&config.stdout, config.interactive)?;
         let mut bus = Bus::new();
         bus.register_pio(COM1_BASE, COM1_SIZE, Box::new(uart))?;
         bus.register_pio(Cmos::BASE, Cmos::SIZE, Box::new(Cmos::new()))?;
@@ -158,7 +154,7 @@ impl Vm {
 
     fn run_loop(&mut self) -> Result<ExitStatus, IngotError> {
         let mut asserted: Vec<u32> = Vec::new();
-        Self::install_wakeup_timer();
+        wakeup_timer::install();
         loop {
             match self.vcpus[0].run()? {
                 VcpuExit::Hlt => return Ok(ExitStatus::Halted),
@@ -214,33 +210,6 @@ impl Vm {
         Ok(())
     }
 
-    fn validate(config: &Config) -> Result<(), HostError> {
-        if !config.kernel_path.is_file() {
-            return Err(HostError::KernelImageNotReadable(config.kernel_path.clone()));
-        }
-        if let Some(p) = &config.initramfs_path {
-            if !p.is_file() {
-                return Err(HostError::InitramfsNotReadable(p.clone()));
-            }
-        }
-        if config.vcpus != 1 {
-            return Err(HostError::InvalidConfig("only single-vCPU is supported in Phase 2 (Phase 6 adds multi-vCPU)"));
-        }
-        if config.memory_bytes < MIN_MEMORY {
-            return Err(HostError::InvalidConfig("memory must be at least 16 MiB"));
-        }
-        if !config.memory_bytes.is_multiple_of(PAGE_SIZE) {
-            return Err(HostError::InvalidConfig("memory must be page-aligned"));
-        }
-        if config.cmdline.len() > CMDLINE_MAX {
-            return Err(HostError::InvalidConfig("cmdline too long (max 2048 bytes)"));
-        }
-        if config.cmdline.contains('\0') {
-            return Err(HostError::InvalidConfig("cmdline contains NUL"));
-        }
-        Ok(())
-    }
-
     fn make_vcpus(vm: &kvm::Vm, count: u8, cpuid: &Cpuid) -> Result<Vec<Vcpu>, IngotError> {
         let mut v = Vec::with_capacity(count as usize);
         for i in 0..count {
@@ -249,65 +218,6 @@ impl Vm {
             v.push(vcpu);
         }
         Ok(v)
-    }
-
-    fn make_uart(config: &Config) -> Result<(Uart, Captured, FirstOutput), IngotError> {
-        let (inner, captured) = Self::make_sink(&config.stdout)?;
-        let first_output: FirstOutput = Arc::new(Mutex::new(None));
-        let sink: Box<dyn Write + Send> = Box::new(FirstWriteSink { inner, first_at: first_output.clone() });
-        let uart = Uart::new(sink);
-        Self::maybe_spawn_stdin(uart.input_handle(), config.interactive);
-        Ok((uart, captured, first_output))
-    }
-
-    fn make_sink(s: &StdoutSink) -> Result<(Box<dyn Write + Send>, Captured), HostError> {
-        Ok(match s {
-            StdoutSink::Discard => (Box::new(io::sink()), None),
-            StdoutSink::File(p) => (
-                Box::new(File::create(p).map_err(|_| HostError::InvalidConfig("could not open stdout file"))?),
-                None,
-            ),
-            StdoutSink::Fd(fd) => (Box::new(Self::dup_to_file(*fd)?), None),
-            StdoutSink::Buffer => {
-                let b = Arc::new(Mutex::new(Vec::new()));
-                (Box::new(BufferSink(b.clone())), Some(b))
-            }
-        })
-    }
-
-    fn dup_to_file(fd: std::os::fd::RawFd) -> Result<File, HostError> {
-        let d = unsafe { libc::dup(fd) };
-        if d < 0 { return Err(HostError::InvalidConfig("dup failed for StdoutSink::Fd")); }
-        Ok(unsafe { File::from_raw_fd(d) })
-    }
-
-    /// When `interactive`, spawn a detached thread reading host stdin one
-    /// byte at a time and pushing into the UART's input queue. The thread
-    /// exits when stdin EOFs or errors. Detached because library callers
-    /// using interactive=true accept the leak.
-    ///
-    /// When stdin is not a TTY (i.e. piped), pause for 2s before pushing.
-    /// Piped input would otherwise saturate the UART queue while the
-    /// kernel is still booting; when sh later opens `/dev/console`, the
-    /// n_tty ldisc resets its read buffer and discards bytes that were
-    /// already there. Real interactive typing is naturally paced and
-    /// doesn't trip this — so when stdin is a TTY we don't wait.
-    fn maybe_spawn_stdin(input: UartInput, interactive: bool) {
-        if !interactive { return; }
-        std::thread::spawn(move || {
-            if unsafe { libc::isatty(0) } == 0 {
-                std::thread::sleep(std::time::Duration::from_millis(2000));
-            }
-            let stdin = io::stdin();
-            let mut handle = stdin.lock();
-            let mut buf = [0u8; 1];
-            loop {
-                match handle.read(&mut buf) {
-                    Ok(0) | Err(_) => break,
-                    Ok(_) => input.push(buf[0]),
-                }
-            }
-        });
     }
 
     fn fresh_telemetry() -> Telemetry {
@@ -320,71 +230,6 @@ impl Vm {
             peak_rss_kb: None,
         }
     }
-
-    /// Install a no-op SIGALRM handler and arm setitimer at 5ms intervals.
-    /// SIGALRM with no SA_RESTART forces `KVM_RUN` to return `-EINTR`, which
-    /// `Vcpu::run` turns into `VcpuExit::Intr`. The run loop then drives
-    /// `poll_io` (TAP RX, etc.) before re-entering `KVM_RUN`. Without this,
-    /// a guest in `hlt` would never let the host drain its TAP fd because
-    /// nothing else generates a vCPU exit.
-    fn install_wakeup_timer() {
-        unsafe {
-            let mut sa: libc::sigaction = std::mem::zeroed();
-            sa.sa_sigaction = sigalrm_noop as *const () as libc::sighandler_t;
-            sa.sa_flags = 0;
-            libc::sigemptyset(&mut sa.sa_mask);
-            libc::sigaction(libc::SIGALRM, &sa, std::ptr::null_mut());
-            let it = libc::itimerval {
-                it_interval: libc::timeval { tv_sec: 0, tv_usec: 5_000 },
-                it_value:    libc::timeval { tv_sec: 0, tv_usec: 5_000 },
-            };
-            libc::setitimer(libc::ITIMER_REAL, &it, std::ptr::null_mut());
-        }
-    }
-
-    /// Return a plausible byte for CMOS register `index`. Time fields read
-    /// as zero (Linux's epoch fallback is fine); status registers report
-    /// "RTC running, not updating, 24h binary mode" so `read_persistent_clock`
-    /// proceeds instead of busy-looping on the UIP bit.
-    fn cmos_read(index: u8) -> u8 {
-        match index {
-            0x0A => 0x26,
-            0x0B => 0x06,
-            0x0D => 0x80,
-            _ => 0,
-        }
-    }
-}
-
-// `extern "C"` callback referenced from sigaction. Kept as a free fn
-// because the FFI ABI is at the item level — `impl Vm { extern "C" fn ... }`
-// is legal but unusual; this is the only non-method item in the file.
-extern "C" fn sigalrm_noop(_: libc::c_int) {}
-
-struct BufferSink(Arc<Mutex<Vec<u8>>>);
-impl Write for BufferSink {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(buf);
-        Ok(buf.len())
-    }
-    fn flush(&mut self) -> io::Result<()> { Ok(()) }
-}
-
-/// Sink wrapper that records the moment of the first non-empty write.
-/// Used to mark `Telemetry::first_output_at` for cold-boot measurement.
-struct FirstWriteSink {
-    inner: Box<dyn Write + Send>,
-    first_at: Arc<Mutex<Option<Instant>>>,
-}
-impl Write for FirstWriteSink {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if !buf.is_empty() {
-            let mut g = self.first_at.lock().unwrap();
-            if g.is_none() { *g = Some(Instant::now()); }
-        }
-        self.inner.write(buf)
-    }
-    fn flush(&mut self) -> io::Result<()> { self.inner.flush() }
 }
 
 #[cfg(test)]

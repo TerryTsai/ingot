@@ -15,7 +15,7 @@
 
 use std::ops::Range;
 
-use crate::lifecycle::memory::Memory;
+use crate::lifecycle::support::memory::Memory;
 
 pub(crate) struct Asm<'m> {
     mem: &'m mut Memory,

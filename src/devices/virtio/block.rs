@@ -15,7 +15,7 @@ use super::core::mmio::{VirtioMmio, CONFIG_BASE, INT_USED_RING, VENDOR_ID, VIRTI
 use super::core::queue::{Desc, DESC_F_NEXT, DESC_F_WRITE};
 use crate::devices::{GuestError, Interrupt, MmioDevice};
 use crate::lifecycle::error::HostError;
-use crate::lifecycle::memory::Memory;
+use crate::lifecycle::support::memory::Memory;
 
 const DEVICE_ID_BLOCK: u32 = 2;
 const VIRTIO_BLK_F_RO: u64 = 1 << 5;

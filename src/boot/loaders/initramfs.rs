@@ -7,7 +7,7 @@
 use std::path::Path;
 
 use crate::lifecycle::error::HostError;
-use crate::lifecycle::memory::Memory;
+use crate::lifecycle::support::memory::Memory;
 
 const PAGE_MASK: u64 = 0xFFF;
 

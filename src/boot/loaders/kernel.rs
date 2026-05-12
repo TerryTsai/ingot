@@ -8,7 +8,7 @@
 use std::path::Path;
 
 use crate::lifecycle::error::HostError;
-use crate::lifecycle::memory::Memory;
+use crate::lifecycle::support::memory::Memory;
 
 const ELF_MAGIC: [u8; 4] = [0x7f, b'E', b'L', b'F'];
 const ELFCLASS64: u8 = 2;

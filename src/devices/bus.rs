@@ -5,7 +5,7 @@
 //! run loop dispatches every MMIO/PIO exit through this bus.
 
 use crate::lifecycle::error::HostError;
-use crate::lifecycle::memory::Memory;
+use crate::lifecycle::support::memory::Memory;
 
 use super::GuestError;
 
