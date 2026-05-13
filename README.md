@@ -54,14 +54,14 @@ cargo run --bin ingot -- run \
 
 ## Guest kernel
 
-Ingot runs a custom-built Linux 6.6. The full stripped-down `.config` is committed at [`kernel/config`](kernel/config) — a single file you drop into a Linux source tree and build. Resulting `vmlinux` is ~13 MB. Modules, PCI, ACPI, USB, sound, framebuffer, KASLR, audit, KEYS, and every filesystem except `devtmpfs`/`tmpfs`/`procfs`/`sysfs`/`ext4` are off.
+Ingot runs a custom-built Linux 6.6. The kernel defconfig is committed at [`kernel/defconfig`](kernel/defconfig) — 101 lines, the minimum delta from kbuild defaults. Resulting `vmlinux` is ~13 MB. Modules, PCI, ACPI, USB, sound, framebuffer, KASLR, audit, KEYS, and every filesystem except `devtmpfs`/`tmpfs`/`procfs`/`sysfs`/`ext4` are off.
 
 Build:
 
 ```sh
 curl -O https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.6.30.tar.xz
 tar xf linux-6.6.30.tar.xz
-cp kernel/config linux-6.6.30/.config
+cp kernel/defconfig linux-6.6.30/.config
 cd linux-6.6.30
 make olddefconfig
 make -j$(nproc) vmlinux
