@@ -8,13 +8,13 @@ Ingot boots a Linux microVM, runs a single workload to completion, captures the 
 
 Ingot has a minimalist design. It excludes anything not required to run a single short-lived guest: no live migration, no hot-plug, no PCI passthrough, no daemon control plane. The smaller surface reduces startup time, memory footprint, and the amount of code a reader has to hold in their head.
 
-Today: ~3,700 lines of Rust + a microvm-tuned Linux kernel + a busybox initramfs.
+Today: ~3,700 lines of Rust + a custom Linux 6.6 kernel + a busybox initramfs.
 
 ## Quick start
 
 Prerequisites: Linux x86_64 host with `/dev/kvm`, user in the `kvm` group, Rust toolchain, `fakeroot` and `e2fsprogs` for the test scripts. The test scripts also need `sudo` for `tap0` setup and `mkfs.ext4`.
 
-Build a microvm-tuned kernel and a static busybox, then any of:
+Build the guest kernel and a static busybox (see [Guest kernel](#guest-kernel) below), then any of:
 
 ```sh
 cargo test --quiet            # 97 unit tests + 1 doctest on real KVM
@@ -51,6 +51,49 @@ cargo run --bin ingot -- run \
 | Multiple VMs per process, daemon control plane | out of scope |
 
 97 unit tests and 1 doctest pass on real KVM. Each script in `scripts/` prints eight PASS/FAIL indicators.
+
+## Guest kernel
+
+Ingot runs a custom-built Linux 6.6 configured from upstream `tinyconfig` plus a small fragment that turns on only what's needed. Resulting `vmlinux` is ~13 MB. Modules, PCI, ACPI, USB, sound, framebuffer, KASLR, audit, KEYS, and every filesystem except `devtmpfs`/`tmpfs`/`procfs`/`sysfs`/`ext4` are off.
+
+The fragment, relative to `tinyconfig`:
+
+```
+CONFIG_SERIAL_8250_CONSOLE=y
+CONFIG_BINFMT_ELF=y
+CONFIG_BINFMT_SCRIPT=y
+CONFIG_FUTEX=y
+CONFIG_EPOLL=y
+CONFIG_EVENTFD=y
+CONFIG_TIMERFD=y
+CONFIG_SIGNALFD=y
+CONFIG_INOTIFY_USER=y
+CONFIG_DEVTMPFS=y
+CONFIG_VIRTIO_MENU=y
+CONFIG_VIRTIO_MMIO=y
+CONFIG_VIRTIO_MMIO_CMDLINE_DEVICES=y
+CONFIG_VIRTIO_BLK=y
+CONFIG_EXT4_FS=y
+CONFIG_NET=y
+CONFIG_INET=y
+CONFIG_IPV6=y
+CONFIG_VIRTIO_NET=y
+CONFIG_VSOCKETS=y
+CONFIG_VIRTIO_VSOCKETS=y
+CONFIG_IP_PNP=y          # boot-from-disk without initramfs
+```
+
+Build:
+
+```sh
+cd linux-6.6.30
+make tinyconfig
+./scripts/kconfig/merge_config.sh -m .config ingot.fragment
+make olddefconfig
+make -j$(nproc) vmlinux
+```
+
+Build deps: `gcc`, `make`, `flex`, `bison`, `bc`, `libssl-dev`, `libelf-dev`.
 
 ## Performance
 
