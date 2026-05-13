@@ -41,7 +41,7 @@ impl Config {
             }
         }
         if self.vcpus != 1 {
-            return Err(HostError::InvalidConfig("only single-vCPU is supported in Phase 2 (Phase 6 adds multi-vCPU)"));
+            return Err(HostError::InvalidConfig("only single-vCPU is supported"));
         }
         if self.memory_bytes < MIN_MEMORY {
             return Err(HostError::InvalidConfig("memory must be at least 16 MiB"));

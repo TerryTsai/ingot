@@ -1,6 +1,4 @@
-//! Typed-harness spike (Phase 0). See docs/spikes/typed-harness.md.
-//!
-//! Compiles against the Phase 0 API. Does not run.
+//! Typed-harness sketch. Compiles against the public API; does not run.
 
 #![allow(dead_code, unused_imports, unused_variables)]
 

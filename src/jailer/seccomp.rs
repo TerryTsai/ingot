@@ -1,7 +1,6 @@
-//! Seccomp BPF allowlist for the VMM process. Per SPEC §3.3.3, the
-//! VMM runs sandboxed and the seccomp filter is the contract: exactly
-//! the syscalls we provably need, no others. Adding one requires a
-//! written justification.
+//! Seccomp BPF allowlist for the VMM process. The VMM runs sandboxed
+//! and the seccomp filter is the contract: exactly the syscalls we
+//! provably need, no others. Adding one requires a written justification.
 //!
 //! Two install modes (CLI `--seccomp`):
 //! - `log` — filter logs blocked syscalls to dmesg, allows them. Use

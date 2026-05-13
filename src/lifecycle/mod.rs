@@ -1,4 +1,4 @@
-//! Lifecycle subsystem (SPEC §3.1.4). Owns the `Vm` orchestrator, the
+//! Lifecycle subsystem. Owns the `Vm` orchestrator, the
 //! state machine, the public configuration + outcome surface, the
 //! single mmap'd guest-memory region, and the unified `IngotError`
 //! dispatch. Composes `kvm`, `boot`, and `devices`; is the only

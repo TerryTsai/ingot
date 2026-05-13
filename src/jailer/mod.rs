@@ -1,4 +1,4 @@
-//! Jailer subsystem (SPEC §3.1.5). Two halves:
+//! Jailer subsystem. Two halves:
 //!
 //!   In-process (always linked into the VMM):
 //!     seccomp.rs   the BPF allowlist the VMM installs on itself

@@ -190,7 +190,7 @@ mod tests {
         vcpu.set_sregs(&sregs).expect("set_sregs");
     }
 
-    /// 4 KiB real-mode hello world: the Phase 1 done-criterion test.
+    /// 4 KiB real-mode hello world.
     /// Maps a single page containing one `hlt` (0xF4) at guest physical
     /// 0x1000, sets CS:IP = 0:0x1000, runs, expects KVM_EXIT_HLT.
     #[test]

@@ -11,7 +11,7 @@
 //!      client connection reads a single newline-terminated integer N
 //!      and replies with "primes up to N: count=X, largest=Y\n".
 //! End-to-end: real compute + real Linux network stack + real TCP
-//! over the virtio-net path that Phase 4 wired up.
+//! over the virtio-net path.
 
 use std::io::{Read, Write};
 use std::net::TcpListener;

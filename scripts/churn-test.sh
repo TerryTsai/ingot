@@ -1,9 +1,8 @@
 #!/bin/bash
-# scripts/churn-test.sh — Phase 8 integration-hardening starter.
+# scripts/churn-test.sh — integration-hardening starter.
 # Create and destroy VMs in a loop. Record peak host RSS, fd count,
-# and tap0 / virtio-vsock state. Pass criterion (per SPEC §4 Phase 8):
-# zero growth over the run. This is the lightweight version; the
-# 24-hour churn lives in CI in Phase 8 proper.
+# and tap0 / virtio-vsock state. Pass criterion: zero growth over the
+# run. Lightweight version; the 24-hour churn belongs in CI.
 #
 # What gets churned: a tiny initramfs that prints once and exits,
 # triggering panic=1 → triple-fault → ingot exits. Each iteration

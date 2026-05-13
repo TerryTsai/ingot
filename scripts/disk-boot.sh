@@ -1,7 +1,7 @@
 #!/bin/bash
-# scripts/disk-boot.sh — strict Phase 3 done-criterion: boot from a
-# virtio-block rootfs without an initramfs. Builds a self-contained
-# ext4 image (just /init + /dev/console + the bare mount points),
+# scripts/disk-boot.sh — boot from a virtio-block rootfs without an
+# initramfs. Builds a self-contained ext4 image (just /init +
+# /dev/console + the bare mount points),
 # boots ingot with `root=/dev/vda init=/init` and no --initramfs,
 # connects to the guest's TCP server via the same tap0 path the
 # compute demo uses.

@@ -3,12 +3,6 @@
 //!
 //! Run with:
 //!   cargo run --example eval -- vmlinux initramfs.cpio.gz
-//!
-//! Sketch for the "code-runner" shape sketched in
-//! `docs/spikes/embedded-api-ergonomics.md`. The full vision feeds
-//! code to a generic interpreter image via vsock (Phase 5); this
-//! version is the pre-vsock approximation — pack code into the
-//! initramfs and read back the stdout the workload prints.
 
 use std::path::PathBuf;
 

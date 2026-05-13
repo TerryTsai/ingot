@@ -281,7 +281,7 @@ mod tests {
         assert!(bus.register_pio(0x3FC, 4, Box::new(b)).is_err());
     }
 
-    // ── property tests (SPEC §3.3: hostile-guest addresses) ────────────
+    // ── property tests (hostile-guest addresses) ───────────────────────
     //
     // The contract: routing decisions on any (addr, len) pair never panic.
     // Out-of-range MMIO returns MmioOutOfRange; out-of-range PIO returns

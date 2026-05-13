@@ -1,8 +1,7 @@
-//! Embedded-API worked example. The Phase 0 spike sketched the shape:
-//! `evaluate(input) -> output`. With Phase 5 vsock real, this is the
-//! shape filled in. We spawn `Vm::run` on a background thread, poll the
-//! guest's AF_VSOCK listener until reachable, send one integer, read
-//! the prime-count reply, join the VM thread.
+//! Embedded-API worked example: `evaluate(input) -> output`, with
+//! AF_VSOCK as the data channel. Spawn `Vm::run` on a background
+//! thread, poll the guest's AF_VSOCK listener until reachable, send
+//! one integer, read the prime-count reply, join the VM thread.
 //!
 //! Call as:
 //!   cargo run --release --example evaluate -- <kernel> <initramfs> <cid> <input>

@@ -230,7 +230,7 @@ mod tests {
         assert!(q.write_chain(&mut m, 0, b"xyz").is_err());
     }
 
-    // ── property tests (SPEC §3.3: hostile-guest contract) ─────────────
+    // ── property tests (hostile-guest contract) ────────────────────────
     //
     // The contract these properties verify:
     //   - For ANY pattern of bytes in guest memory and ANY descriptor

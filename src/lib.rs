@@ -1,10 +1,9 @@
-//! Ingot — minimal KVM-based VMM. See SPEC.md and docs/architecture.md.
+//! Ingot — minimal KVM-based VMM.
 //!
-//! The five subsystems from SPEC §3.1 each live in a folder of the
-//! same name. `lifecycle` is the orchestrator and the public-API
-//! owner; everything else is composed by it.
+//! Five subsystems, one folder each. `lifecycle` is the orchestrator
+//! and owns the public API; everything else is composed by it.
 
-// Crate-wide `dead_code` allow: Phase 5 (`Vsock`, `VsockSpec`) is sketched
+// Crate-wide `dead_code` allow: `Vsock` and `VsockSpec` are sketched
 // in placeholder form, and several KVM helpers (`get_regs`, `get_sregs`,
 // `id`, `KVM_GET_REGS`, `KVM_GET_SREGS`, `BootParams::as_bytes`) are
 // exercised by `#[cfg(test)]` blocks but not the production run loop —

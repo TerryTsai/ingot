@@ -1,9 +1,7 @@
 #!/bin/bash
-# scripts/evaluate-demo.sh — Phase 6 worked example.
-# Exercises the embedded-API shape sketched in the Phase 0
-# `docs/spikes/embedded-api-ergonomics.md` — caller's library function
-# takes a request, returns a response — using AF_VSOCK as the data
-# channel between host and guest.
+# scripts/evaluate-demo.sh — worked example of the embedded-API shape:
+# caller's library function takes a request, returns a response, with
+# AF_VSOCK as the data channel between host and guest.
 #
 # Builds:
 #   - examples/evaluate.rs       library example, host side

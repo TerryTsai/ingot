@@ -5,7 +5,7 @@
 //!
 //! Requires the unified cgroups v2 hierarchy mounted at /sys/fs/cgroup,
 //! which is the Linux default since systemd 246 / kernel 4.5. v1 is
-//! not supported; SPEC §2 forbids legacy compatibility.
+//! not supported.
 
 use std::fs;
 use std::io;
