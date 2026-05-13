@@ -54,41 +54,15 @@ cargo run --bin ingot -- run \
 
 ## Guest kernel
 
-Ingot runs a custom-built Linux 6.6 configured from upstream `tinyconfig` plus a small fragment that turns on only what's needed. Resulting `vmlinux` is ~13 MB. Modules, PCI, ACPI, USB, sound, framebuffer, KASLR, audit, KEYS, and every filesystem except `devtmpfs`/`tmpfs`/`procfs`/`sysfs`/`ext4` are off.
-
-The fragment, relative to `tinyconfig`:
-
-```
-CONFIG_SERIAL_8250_CONSOLE=y
-CONFIG_BINFMT_ELF=y
-CONFIG_BINFMT_SCRIPT=y
-CONFIG_FUTEX=y
-CONFIG_EPOLL=y
-CONFIG_EVENTFD=y
-CONFIG_TIMERFD=y
-CONFIG_SIGNALFD=y
-CONFIG_INOTIFY_USER=y
-CONFIG_DEVTMPFS=y
-CONFIG_VIRTIO_MENU=y
-CONFIG_VIRTIO_MMIO=y
-CONFIG_VIRTIO_MMIO_CMDLINE_DEVICES=y
-CONFIG_VIRTIO_BLK=y
-CONFIG_EXT4_FS=y
-CONFIG_NET=y
-CONFIG_INET=y
-CONFIG_IPV6=y
-CONFIG_VIRTIO_NET=y
-CONFIG_VSOCKETS=y
-CONFIG_VIRTIO_VSOCKETS=y
-CONFIG_IP_PNP=y          # boot-from-disk without initramfs
-```
+Ingot runs a custom-built Linux 6.6. The full stripped-down `.config` is committed at [`kernel/config`](kernel/config) — a single file you drop into a Linux source tree and build. Resulting `vmlinux` is ~13 MB. Modules, PCI, ACPI, USB, sound, framebuffer, KASLR, audit, KEYS, and every filesystem except `devtmpfs`/`tmpfs`/`procfs`/`sysfs`/`ext4` are off.
 
 Build:
 
 ```sh
+curl -O https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.6.30.tar.xz
+tar xf linux-6.6.30.tar.xz
+cp kernel/config linux-6.6.30/.config
 cd linux-6.6.30
-make tinyconfig
-./scripts/kconfig/merge_config.sh -m .config ingot.fragment
 make olddefconfig
 make -j$(nproc) vmlinux
 ```
